@@ -1,0 +1,5 @@
+.vscode
+*.out
+*.csv
+__pycache__
+build

@@ -1,0 +1,48 @@
+<launch>
+
+  <env name="GAZEBO_MODEL_PATH"
+    value="$(optenv GAZEBO_MODEL_PATH):/home/mozayyan/Surena_ws/src/surenaV_core/simulation/surenaV_gazebo/models:/home/mozayyan/Surena_ws/src/aws-robomaker-small-warehouse-world/models:/home/mozayyan/Surena_ws/devel/lib"/>
+
+  <!-- These are the arguments passed to this launch file, for example paused:=true -->
+  <arg name="paused" default="true"/>
+  <arg name="use_sim_time" default="true"/>
+  <arg name="gui" default="true"/>
+  <arg name="headless" default="false"/>
+  <arg name="debug" default="false"/>
+
+  <!-- LAUNCH GAZEBO  -->
+  <include file="$(find gazebo_ros)/launch/empty_world.launch">
+    <arg name="world_name" value="$(find surenaV_gazebo)/worlds/factory.world"/>
+    <arg name="debug" value="$(arg debug)" />
+    <arg name="gui" value="$(arg gui)" />
+    <arg name="paused" value="$(arg paused)"/>
+    <arg name="use_sim_time" value="$(arg use_sim_time)"/>
+    <arg name="headless" value="$(arg headless)"/>
+  </include>
+
+  <!-- LOAD THE URDF TO THE PARAMETER SERVER -->
+  <param name="robot_description"
+    command="$(find xacro)/xacro '$(find surenaV_description)/urdf/surenaV.urdf'" />
+
+  <!-- SPAWN THE ROBOT IN GAZEBO -->
+  <node name="urdf_spawner" pkg="gazebo_ros" type="spawn_model" respawn="false" output="screen"
+    args="-urdf -model surenaV -param robot_description"/>
+
+    <!-- SPAWN HUMANS (Actors) -->
+  <node name="h1" pkg="gazebo_ros" type="spawn_model" output="screen"
+        args="-model human_1 -sdf -file $(find surenaV_gazebo)/models/human_actor/model.sdf -x 8.0 -y 3.0 -z 1.00" />
+
+  <!-- <node name="h2" pkg="gazebo_ros" type="spawn_model" output="screen"
+      args="-model human_2 -sdf -file $(find surenaV_gazebo)/models/human_actor/model.sdf -x 6.0 -y 4.0 -z 1.00" />
+
+  <node name="h3" pkg="gazebo_ros" type="spawn_model" output="screen"
+      args="-model human_3 -sdf -file $(find surenaV_gazebo)/models/human_actor/model.sdf -x 4.0 -y -4.0 -z 1.00 -Y -1.0" />
+  
+  <node name="h4" pkg="gazebo_ros" type="spawn_model" output="screen"
+      args="-model human_4 -sdf -file $(find surenaV_gazebo)/models/human_actor/model.sdf -x 5.0 -y -6.0 -z 1.00 -Y 4.0" /> -->
+
+  <!-- LAUNCH THE CONTROLLERS AND THE BRIDGE NODE -->
+  <!-- This will load the controller configurations, spawn them, and start the bridge node -->
+  <include file="$(find surenaV_gazebo)/launch/surenaV_control.launch" />
+
+</launch>

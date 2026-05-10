@@ -1,0 +1,79 @@
+<launch>
+  <env name="GAZEBO_MODEL_PATH"
+    value="$(optenv GAZEBO_MODEL_PATH):/home/mozayyan/Surena_ws/src/surenaV_core/simulation/surenaV_gazebo/models"/>
+
+
+  <!-- These are the arguments passed to this launch file, for example paused:=true -->
+  <arg name="paused" default="true"/>
+  <arg name="use_sim_time" default="true"/>
+  <arg name="gui" default="true"/>
+  <arg name="headless" default="false"/>
+  <arg name="debug" default="false"/>
+
+  <!-- LAUNCH GAZEBO  -->
+  <include file="$(find gazebo_ros)/launch/empty_world.launch">
+    <arg name="world_name" value="$(find surenaV_gazebo)/worlds/surenaV.world"/>
+    <arg name="debug" value="$(arg debug)" />
+    <arg name="gui" value="$(arg gui)" />
+    <arg name="paused" value="$(arg paused)"/>
+    <arg name="use_sim_time" value="$(arg use_sim_time)"/>
+    <arg name="headless" value="$(arg headless)"/>
+  </include>
+
+  <!-- LOAD THE URDF TO THE PARAMETER SERVER -->
+  <param name="robot_description"
+    command="$(find xacro)/xacro '$(find surenaV_description)/urdf/surenaV.urdf'" />
+
+  <!-- SPAWN THE ROBOT IN GAZEBO -->
+  <node name="urdf_spawner" pkg="gazebo_ros" type="spawn_model" respawn="false" output="screen"
+    args="-urdf -model surenaV -param robot_description"/>
+
+  <!-- Static obstacles -->
+  <node name="spawn_obstacle_1" pkg="gazebo_ros" type="spawn_model"
+        args="-file $(find social_mpc_planner)/models/cylinder_obstacle/model.sdf -sdf -model obstacle_1 -x -2.0 -y -2.0 -z 0.5"/>
+
+  <node name="spawn_obstacle_2" pkg="gazebo_ros" type="spawn_model"
+        args="-file $(find social_mpc_planner)/models/cylinder_obstacle/model.sdf -sdf -model obstacle_2 -x -2.0 -y 0.0 -z 0.5"/>
+
+  <node name="spawn_obstacle_3" pkg="gazebo_ros" type="spawn_model"
+        args="-file $(find social_mpc_planner)/models/cylinder_obstacle/model.sdf -sdf -model obstacle_3 -x -2.0 -y 2.0 -z 0.5"/>
+
+  <node name="spawn_obstacle_4" pkg="gazebo_ros" type="spawn_model"
+        args="-file $(find social_mpc_planner)/models/cylinder_obstacle/model.sdf -sdf -model obstacle_4 -x 0.0 -y -2.0 -z 0.5"/>
+
+  <node name="spawn_obstacle_6" pkg="gazebo_ros" type="spawn_model"
+        args="-file $(find social_mpc_planner)/models/cylinder_obstacle/model.sdf -sdf -model obstacle_6 -x 0.0 -y 2.0 -z 0.5"/>
+
+  <node name="spawn_obstacle_7" pkg="gazebo_ros" type="spawn_model"
+        args="-file $(find social_mpc_planner)/models/cylinder_obstacle/model.sdf -sdf -model obstacle_7 -x 2.0 -y -2.0 -z 0.5"/>
+
+  <node name="spawn_obstacle_8" pkg="gazebo_ros" type="spawn_model"
+        args="-file $(find social_mpc_planner)/models/cylinder_obstacle/model.sdf -sdf -model obstacle_8 -x 2.0 -y 0.0 -z 0.5"/>
+
+  <node name="spawn_obstacle_9" pkg="gazebo_ros" type="spawn_model"
+        args="-file $(find social_mpc_planner)/models/cylinder_obstacle/model.sdf -sdf -model obstacle_9 -x 2.0 -y 2.0 -z 0.5"/>
+
+  
+  <!-- Static obstacle extractor + marker publisher -->
+  <node name="gazebo_static_obstacle_node"
+        pkg="social_mpc_planner"
+        type="gazebo_static_obstacle_node.py"
+        output="screen">
+    <param name="obstacle_prefix" value="obstacle_"/>
+    <param name="obstacle_radius" value="0.15"/>
+  </node>
+
+
+  <!-- Odom TF publisher -->
+  <node pkg="social_mpc_planner"
+      type="gazebo_odom_publisher.py"
+      name="gazebo_odom_publisher"
+      output="screen">
+  <param name="robot_name" value="surenaV"/>
+  </node>
+
+  <!-- LAUNCH THE CONTROLLERS AND THE BRIDGE NODE -->
+  <!-- This will load the controller configurations, spawn them, and start the bridge node -->
+  <include file="$(find surenaV_gazebo)/launch/surenaV_control.launch" />
+
+</launch>

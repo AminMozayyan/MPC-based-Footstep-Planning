@@ -1,0 +1,6 @@
+string[] axes
+float64[] deltas
+float64[] durations
+---
+bool ok
+string message

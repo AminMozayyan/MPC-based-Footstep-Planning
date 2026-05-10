@@ -1,0 +1,8 @@
+# Request
+int64[] target_positions
+int64 control_data
+string hand_selection  # "right", "left" (default="right")
+---
+# Response
+bool success
+string message

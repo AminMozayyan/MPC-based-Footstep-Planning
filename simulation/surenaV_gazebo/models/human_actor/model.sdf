@@ -1,0 +1,63 @@
+<?xml version="1.0" ?>
+<sdf version="1.5">
+  <model name="human_actor">
+  <static>false</static>
+  <gravity>true</gravity>
+    
+    <link name="link">
+      <inertial>
+
+        <pose>0 0 0.855 0 0 0</pose>
+        
+        <mass>58.32</mass>
+        
+        <inertia>
+          <ixx>16.43</ixx>   
+          <ixy>0</ixy>
+          <ixz>0</ixz>
+          <iyy>14.69</iyy>   
+          <iyz>0</iyz>
+          <izz>2.70</izz>    
+        </inertia>
+      </inertial>
+
+      <collision name="bottom">
+
+        <pose>0 0 0.009 0 0 0</pose>
+        <geometry>
+          <box>
+            <size>0.315 0.675 0.018</size>  
+          </box>
+        </geometry>
+      </collision>
+
+      <collision name="person">
+   
+        <pose>0 0 -0.018 0 0 0</pose>
+        <geometry>
+          <mesh>
+            <uri>model://human_actor/meshes/walking.dae</uri>
+            <scale>0.9 0.9 0.9</scale>
+          </mesh>
+        </geometry>
+      </collision>
+
+      <visual name="visual">
+
+        <pose>0 0 -0.018 0 0 0</pose>
+        <geometry>
+          <mesh>
+            <uri>model://human_actor/meshes/walking.dae</uri>
+
+            <scale>0.9 0.9 0.9</scale>
+          </mesh>
+        </geometry>
+      </visual>
+    </link>
+
+    <!-- <plugin name="human_controller"
+        filename="libHumanControllerPlugin.so"/> -->
+
+
+  </model>
+</sdf>

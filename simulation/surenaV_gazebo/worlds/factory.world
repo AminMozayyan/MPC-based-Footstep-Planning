@@ -1,0 +1,211 @@
+<?xml version="1.0" ?>
+<sdf version="1.6">
+
+<world name="factory_world">
+
+<physics type="ode">
+  <gravity>0 0 -9.81</gravity>
+  <real_time_update_rate>1000</real_time_update_rate>
+  <max_step_size>0.001</max_step_size>
+</physics>
+
+<include>
+  <uri>model://sun</uri>
+</include>
+
+<include>
+  <uri>model://ground_plane</uri>
+</include>
+
+<!-- ================= WALLS ================= -->
+
+<model name="north_wall">
+  <static>true</static>
+  <pose>0 12 1 0 0 0</pose>
+  <link name="l">
+    <collision name="c"><geometry><box><size>24 0.4 2</size></box></geometry></collision>
+    <visual name="v"><geometry><box><size>24 0.4 2</size></box></geometry></visual>
+  </link>
+</model>
+
+<model name="south_wall">
+  <static>true</static>
+  <pose>0 -12 1 0 0 0</pose>
+  <link name="l">
+    <collision name="c"><geometry><box><size>24 0.4 2</size></box></geometry></collision>
+    <visual name="v"><geometry><box><size>24 0.4 2</size></box></geometry></visual>
+  </link>
+</model>
+
+<model name="east_wall">
+  <static>true</static>
+  <pose>12 0 1 0 0 0</pose>
+  <link name="l">
+    <collision name="c"><geometry><box><size>0.4 24 2</size></box></geometry></collision>
+    <visual name="v"><geometry><box><size>0.4 24 2</size></box></geometry></visual>
+  </link>
+</model>
+
+<model name="west_wall">
+  <static>true</static>
+  <pose>-12 0 1 0 0 0</pose>
+  <link name="l">
+    <collision name="c"><geometry><box><size>0.4 24 2</size></box></geometry></collision>
+    <visual name="v"><geometry><box><size>0.4 24 2</size></box></geometry></visual>
+  </link>
+</model>
+
+<model name="middle_wall">
+  <static>true</static>
+  <pose>0 -8 1 0 0 1.57</pose>
+  <link name="l">
+    <collision name="c"><geometry><box><size>8 0.3 2</size></box></geometry></collision>
+    <visual name="v"><geometry><box><size>8 0.3 2</size></box></geometry></visual>
+  </link>
+</model>
+
+<model name="middle_wall2">
+  <static>true</static>
+  <pose>0 8 1 0 0 1.57</pose>
+  <link name="l">
+    <collision name="c"><geometry><box><size>8 0.3 2</size></box></geometry></collision>
+    <visual name="v"><geometry><box><size>8 0.3 2</size></box></geometry></visual>
+  </link>
+</model>
+
+<!-- ================= SHELVES ================= -->
+
+<model name="shelf1">
+  <include><uri>model://aws_robomaker_warehouse_ShelfE_01</uri></include>
+  <pose>8.5 7 0 0 0 1.57</pose>
+</model>
+
+<model name="shelf2">
+  <include><uri>model://aws_robomaker_warehouse_ShelfE_01</uri></include>
+  <pose>3 7 0 0 0 1.57</pose>
+</model>
+
+<model name="shelf3">
+  <include><uri>model://aws_robomaker_warehouse_ShelfE_01</uri></include>
+  <pose>-6 7 0 0 0 1.57</pose>
+</model>
+
+<!-- ================= TABLE AREA ================= -->
+
+<model name="desk1">
+  <include><uri>model://aws_robomaker_warehouse_DeskC_01</uri></include>
+  <pose>-6 1 0 0 0 0</pose>
+</model>
+
+<model name="desk2">
+  <include><uri>model://aws_robomaker_warehouse_DeskC_01</uri></include>
+  <pose>6 -2 0 0 0 1.57</pose>
+</model>
+
+<!-- ================= STORAGE ================= -->
+
+<model name="box1">
+  <include><uri>model://aws_robomaker_warehouse_ClutteringC_01</uri></include>
+  <pose>-5 -7 0 0 0 0</pose>
+</model>
+
+<model name="box2">
+  <include><uri>model://aws_robomaker_warehouse_ClutteringA_01</uri></include>
+  <pose>-7 -7 0 0 0 0</pose>
+</model>
+
+<!-- ================= TOOLS ================= -->
+
+<model name="bucket1">
+  <include><uri>model://aws_robomaker_warehouse_Bucket_01</uri></include>
+  <pose>2 -6 0 0 0 0</pose>
+</model>
+
+<model name="trash1">
+  <include><uri>model://aws_robomaker_warehouse_TrashCanC_01</uri></include>
+  <pose>-2 4 0 0 0 0</pose>
+</model>
+
+<model name="pallet1">
+  <include><uri>model://aws_robomaker_warehouse_PalletJackB_01</uri></include>
+  <pose>8 -7 0 0 0 1.57</pose>
+</model>
+
+<!-- ================= HUMAN CROWD CONTROLLER ================= -->
+
+<model name="crowd_controller">
+  <static>true</static>
+  <pose>0 0 0 0 0 0</pose>
+
+  <link name="link">
+    <visual name="visual">
+      <geometry>
+        <box>
+          <size>0.01 0.01 0.01</size>
+        </box>
+      </geometry>
+    </visual>
+  </link>
+
+  <plugin name="human_crowd_controller"
+          filename="libHumanControllerPlugin.so">
+
+    <human_prefix>human</human_prefix>
+
+    <!-- اسم ربات تو در launch برابر surenaV است -->
+    <robot_name>surenaV</robot_name>
+
+    <!-- محدوده حرکت، کمی داخل‌تر از دیوارهای ±12 -->
+    <xmin>-7.5</xmin>
+    <xmax>7.5</xmax>
+    <ymin>0.0</ymin>
+    <ymax>12.0</ymax>
+
+    <!-- سرعت طبیعی انسان -->
+    <v0>0.25</v0>
+    <v_max>0.45</v_max>
+    <tau>0.1</tau>
+    <max_acc>1.0</max_acc>
+
+    <!-- فاصله گرفتن انسان‌ها از هم -->
+    <A_human>2.0</A_human>
+    <B_human>0.6</B_human>
+    <R_human>1.0</R_human>
+    <hard_human_radius>1.0</hard_human_radius>
+
+    <!-- فاصله گرفتن از ربات -->
+    <A_robot>3.0</A_robot>
+    <B_robot>0.5</B_robot>
+    <R_robot>0.7</R_robot>
+    <hard_robot_radius>1.0</hard_robot_radius>
+
+    <!-- فاصله گرفتن از موانع -->
+    <A_obs>5.0</A_obs>
+    <B_obs>0.5</B_obs>
+    <R_obs>1.0</R_obs>
+    <hard_obs_radius>2.0</hard_obs_radius>
+
+    <!-- دیوارها -->
+    <A_wall>4.0</A_wall>
+    <B_wall>0.5</B_wall>
+    <wall_margin>1.0</wall_margin>
+
+    <!-- طبیعی‌تر شدن حرکت -->
+    <wander_heading_noise>0.12</wander_heading_noise>
+    <heading_change_rate>0.3</heading_change_rate>
+    <tangential_gain>0.2</tangential_gain>
+
+    <wall_turn_cooldown_s>0.8</wall_turn_cooldown_s>
+
+  </plugin>
+</model>
+
+<!-- Camera -->
+<gui fullscreen='0'>
+  <camera name='user_camera'>
+    <pose>-18 0 20 0 0.9 0</pose>
+  </camera>
+</gui>
+
+</world>
+</sdf>
