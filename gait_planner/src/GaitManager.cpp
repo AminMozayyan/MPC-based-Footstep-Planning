@@ -635,7 +635,7 @@ bool GaitManager::walk(gait_planner::Trajectory::Request &req,
         t_step = walk_config["t_step"];
         step_count = walk_config["footsteps"].size() - 2;
 
-        int theta_idx = walk_config["footsteps"].size() - 2;
+        int theta_idx = 2;
         theta = walk_config["footsteps"][theta_idx][3];
         theta = -theta;
 

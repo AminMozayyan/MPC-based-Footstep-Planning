@@ -56,6 +56,8 @@ class FootstepMPCPlanner:
         self.obstacles = []
         self.max_obstacles = 9
         self.foot_clearance = 0.5
+        self.enable_static_obstacles = False
+        self.enable_dynamic_obstacles = False
         self.W_backward = 10000.0
         self.W_obs_slack = 30000.0
         self.W_human_slack = 40000.0
@@ -231,40 +233,40 @@ class FootstepMPCPlanner:
 
         local_obstacles = []
 
-        for ox, oy, r in self.obstacles:
-            ox_l, oy_l = self.world_to_local(
-                ox, oy,
-                x_start, y_start, th_start
-            )
-            local_obstacles.append((ox_l, oy_l, r))
+        if self.enable_static_obstacles:
+            for ox, oy, r in self.obstacles:
+                ox_l, oy_l = self.world_to_local(
+                    ox, oy,
+                    x_start, y_start, th_start
+                )
+                local_obstacles.append((ox_l, oy_l, r))
 
         local_people = []
 
-        for person in self.predicted_people[:self.max_people]:
-            traj_l = []
+        if self.enable_dynamic_obstacles:
+            for person in self.predicted_people[:self.max_people]:
+                traj_l = []
+                traj = person["trajectory"]
 
-            traj = person["trajectory"]
+                for k in range(N):
+                    t_k = k * self.step_time
+                    human_index = int(round(t_k / self.human_prediction_dt))
+                    human_index = min(human_index, len(traj) - 1)
 
-            for k in range(N):
-                t_k = k * self.step_time
+                    hx, hy = traj[human_index]
 
-                human_index = int(round(t_k / self.human_prediction_dt))
-                human_index = min(human_index, len(traj) - 1)
+                    hx_l, hy_l = self.world_to_local(
+                        hx, hy,
+                        x_start, y_start, th_start
+                    )
 
-                hx, hy = traj[human_index]
+                    traj_l.append((hx_l, hy_l))
 
-                hx_l, hy_l = self.world_to_local(
-                    hx, hy,
-                    x_start, y_start, th_start
-                )
-
-                traj_l.append((hx_l, hy_l))
-
-            local_people.append({
-                "id": person["id"],
-                "radius": person["radius"],
-                "trajectory": traj_l
-            })
+                local_people.append({
+                    "id": person["id"],
+                    "radius": person["radius"],
+                    "trajectory": traj_l
+                })
 
         opti = ca.Opti()
 
@@ -273,7 +275,10 @@ class FootstepMPCPlanner:
         TH = opti.variable(N)
         num_obs = len(local_obstacles)
         S_obs = opti.variable(num_obs, N) if num_obs > 0 else None
-        S_human = opti.variable(self.max_people, N)
+        if self.enable_dynamic_obstacles:
+            S_human = opti.variable(self.max_people, N)
+        else:
+            S_human = None
 
         cost = 0.0
 
@@ -345,7 +350,7 @@ class FootstepMPCPlanner:
             
             human_constraint_horizon = min(N, 5)
 
-            if k < human_constraint_horizon:
+            if self.enable_dynamic_obstacles and k < human_constraint_horizon:
                 for h, person in enumerate(local_people):
                     hx, hy = person["trajectory"][k]
                     hr = person["radius"]
@@ -415,7 +420,8 @@ class FootstepMPCPlanner:
         }
 
         opti.solver("ipopt", opts)
-        opti.set_initial(S_human, 0.1)
+        if self.enable_dynamic_obstacles:
+            opti.set_initial(S_human, 0.1)
 
         try:
             t0 = rospy.Time.now()
