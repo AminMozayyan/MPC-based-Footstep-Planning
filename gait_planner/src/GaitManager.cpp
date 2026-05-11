@@ -607,11 +607,13 @@ bool GaitManager::ankleHome(bool is_left, int roll_dest, int pitch_dest)
 }
 
 bool GaitManager::walk(gait_planner::Trajectory::Request &req,
-                        gait_planner::Trajectory::Response &res)
+                       gait_planner::Trajectory::Response &res)
 {
-    this->emptyCommand();
-    int rate = 200;
-    ros::Rate rate_(rate);
+    if (!is_walking_)
+    {
+        this->emptyCommand();
+    }
+
     double dt = 0.005;
     double COM_height;
     int step_count;
@@ -619,30 +621,35 @@ bool GaitManager::walk(gait_planner::Trajectory::Request &req,
     double hand_swing_angle;
     double theta;
     bool do_start_transition = true;
-    bool do_end_transition = true;
+    double config_x_offset_ = 0.0;
+    bool has_config_offset_ = false;
 
     string walk_config_path = ros::package::getPath("gait_planner") + "/config/walk_config.json";
     std::ifstream f(walk_config_path);
     json walk_config = json::parse(f);
-    if (req.is_config){
+
+    if (req.is_config)
+    {
         COM_height = walk_config["COM_height"];
         hand_swing_angle = walk_config["hand_swing_angle"];
         t_step = walk_config["t_step"];
         step_count = walk_config["footsteps"].size() - 2;
+
         int theta_idx = walk_config["footsteps"].size() - 2;
         theta = walk_config["footsteps"][theta_idx][3];
         theta = -theta;
-        do_start_transition = walk_config.value("do_start_transition", true);
 
+        do_start_transition = walk_config.value("do_start_transition", true);
     }
-    else{
+    else
+    {
         COM_height = req.COM_height;
         hand_swing_angle = req.hand_swing_angle;
         t_step = req.t_step;
         step_count = req.step_count;
         theta = req.theta;
-
     }
+
     double init_com_pos[3] = {0, 0, 0.71};
     double init_com_orient[3] = {0, 0, 0};
     double final_com_pos[3] = {0, 0, COM_height};
@@ -658,74 +665,118 @@ bool GaitManager::walk(gait_planner::Trajectory::Request &req,
     double final_rankle_pos[3] = {0, -0.0975, 0};
     double final_rankle_orient[3] = {0, 0, 0};
 
-    // int final_iter = robot->OnlineGeneralTrajGen(dt, 2, final_com_pos, final_com_orient,
-    //                                              final_lankle_pos, final_lankle_orient,
-    //                                              final_rankle_pos, final_rankle_orient);
+    bool should_start_loop = false;
 
-    if (do_start_transition) {
-        robot->generalTrajGen(dt, 2, init_com_pos, final_com_pos, init_com_orient, final_com_orient,
-                          init_lankle_pos, final_lankle_pos, init_lankle_orient, final_lankle_orient,
-                          init_rankle_pos, final_rankle_pos, init_rankle_orient, final_rankle_orient);}
-                          
-    // general_traj.request.time = req.t_step;
-    // general_traj.request.init_com_pos = {0, 0, req.COM_height};
-    // general_traj.request.final_com_pos = {0, 0, req.COM_height};
-    // generalTrajectory_.call(general_traj);
-
-    // general_traj.request.init_rankle_pos = {0, -0.0975, 0.05};
-    // general_traj.request.final_rankle_pos = {0, -0.0975, 0.0};
-    // generalTrajectory_.call(general_traj);
-
-    // general_traj.request.init_rankle_pos = {0, -0.0975, 0.0};
-    // general_traj.request.final_rankle_pos = {0, -0.0975, 0.05};
-    // generalTrajectory_.call(general_traj);
-
-    robot->trajGen(req.step_count, req.t_step, req.alpha, req.t_double_support, req.COM_height, req.step_length,
-                   req.step_width, dt, theta, req.ankle_height, req.step_height, 0, req.com_offset, req.is_config);
-    
-
-    /// for mpc simulation
-
-    // init_com_pos[2] = COM_height;
-    // // final_com_pos[1] = 0.07;
-    // final_com_pos[2] = 0.71;
-    // robot->generalTrajGen(dt, 2, init_com_pos, final_com_pos, init_com_orient, final_com_orient,
-    //                       init_lankle_pos, final_lankle_pos, init_lankle_orient, final_lankle_orient,
-    //                       init_rankle_pos, final_rankle_pos, init_rankle_orient, final_rankle_orient);
-
-    ///
-
-
-    // int final_iter = robot->OnlineDCMTrajGen(req.step_count, req.t_step, req.alpha, req.t_double_support, req.COM_height, req.step_length,
-    //                                          req.step_width, dt, req.theta, req.ankle_height, req.step_height, 0, req.com_offset, req.is_config);
-
-    if (hand_swing_angle > 0)
     {
-        robot->handMotion(t_step, step_count, hand_swing_angle, dt, false, true);
+        std::lock_guard<std::mutex> lock(gait_mutex_);
+
+        if (do_start_transition && !is_walking_)
+        {
+            std::cout << "[walk] start transition added" << std::endl;
+
+            robot->generalTrajGen(dt, 2,
+                                init_com_pos, final_com_pos,
+                                init_com_orient, final_com_orient,
+                                init_lankle_pos, final_lankle_pos,
+                                init_lankle_orient, final_lankle_orient,
+                                init_rankle_pos, final_rankle_pos,
+                                init_rankle_orient, final_rankle_orient);
+        }
+        else
+        {
+            std::cout << "[walk] start transition skipped"
+                    << " | is_walking_: " << is_walking_
+                    << std::endl;
+        }
+
+        robot->trajGen(req.step_count, req.t_step, req.alpha, req.t_double_support,
+                       req.COM_height, req.step_length, req.step_width, dt, theta,
+                       req.ankle_height, req.step_height, 0, req.com_offset, req.is_config);
+
+ 
+        if (hand_swing_angle > 0)
+        {
+            robot->handMotion(t_step, step_count, hand_swing_angle, dt, false, true);
+        }
+
+        if (!is_walking_)
+        {
+            is_walking_ = true;
+            gait_iter_ = 0;
+            should_start_loop = true;
+        }
     }
 
-    int iter = 0;
-    int final_iter = robot->getTrajSize();
-    // int final_iter = req.t_step + 4;
+    if (should_start_loop)
+    {
+        std::thread(&GaitManager::gaitExecutionLoop, this).detach();
+    }
 
+    res.result = true;
+    return true;
+}
+
+void GaitManager::gaitExecutionLoop()
+{
+    int rate = 200;
+    ros::Rate rate_(rate);
+    double dt = 0.005;
 
     double jnt_command[12];
     int status;
 
-    while (iter < final_iter)
+    while (ros::ok())
     {
+        int iter = gait_iter_;
+        int final_iter;
 
-        if (hand_swing_angle > 0)
         {
-            double right_armswing_rad, left_armswing_rad;
-            robot->getArmAnglesForIteration(iter, right_armswing_rad, left_armswing_rad);
-            motorCommandArray_[12] = int(right_armswing_rad * encoderResolution[0] * harmonicRatio[0] / M_PI / 2);
-            motorCommandArray_[16] = -int(left_armswing_rad  * encoderResolution[0] * harmonicRatio[0] / M_PI / 2);
-            motorCommandArray_[23] = 90;
-            // cout << right_armswing_rad << ", " << left_armswing_rad << endl;
-            //cout << motorCommandArray_[12] << ", " << motorCommandArray_[16] << endl;
+            std::lock_guard<std::mutex> lock(gait_mutex_);
+            final_iter = robot->getTrajSize();
         }
 
+        if (iter >= final_iter)
+        {
+            int wait_count = 0;
+            const int max_wait_count = 600; // 0.5 ثانیه در 200Hz
+
+            while (ros::ok() && wait_count < max_wait_count)
+            {
+                {
+                    std::lock_guard<std::mutex> lock(gait_mutex_);
+                    final_iter = robot->getTrajSize();
+                }
+
+                if (iter < final_iter)
+                {
+                    std::cout << "[gaitLoop] new trajectory appended"
+                            << " | iter: " << iter
+                            << " | new_final_iter: " << final_iter
+                            << std::endl;
+                    break;
+                }
+
+                wait_count++;
+                rate_.sleep();
+            }
+
+            if (iter >= final_iter)
+            {
+                std::cout << "[gaitLoop] finished"
+                        << " | iter: " << iter
+                        << " | final_iter: " << final_iter
+                        << std::endl;
+
+                {
+                    std::lock_guard<std::mutex> lock(gait_mutex_);
+                    robot->resetTraj();
+                }
+
+                gait_iter_ = 0;
+                is_walking_ = false;
+                break;
+            }
+        }
 
         double config[12];
         double jnt_vel[12];
@@ -735,33 +786,33 @@ bool GaitManager::walk(gait_planner::Trajectory::Request &req,
         int left_bump[4] = {currentLBump_[0], currentLBump_[1], currentLBump_[2], currentLBump_[3]};
         double accelerometer[3] = {baseAcc_[0], baseAcc_[1], baseAcc_[2]};
         double gyro[3] = {baseAngVel_[0], baseAngVel_[1], baseAngVel_[2]};
+
         for (int i = 0; i < 12; i++)
         {
             config[i] = commandConfig_[2][i];
             jnt_vel[i] = (commandConfig_[0][i] - 4 * commandConfig_[1][i] + 3 * commandConfig_[2][i]) / (2 * dt);
         }
-        robot->getJointAngs(iter, config, jnt_vel, right_ft, left_ft, right_bump,
-                            left_bump, gyro, accelerometer, jnt_command, status);
 
-        // robot->getDCMTrajJointAngs(iter, config, jnt_vel, right_ft, left_ft, right_bump,
-        //                            left_bump, gyro, accelerometer, jnt_command, status);
+        {
+            std::lock_guard<std::mutex> lock(gait_mutex_);
+            robot->getJointAngs(iter, config, jnt_vel, right_ft, left_ft, right_bump,
+                                left_bump, gyro, accelerometer, jnt_command, status);
+        }
 
-        // robot->getGeneralTrajJointAngs(iter, config, jnt_vel, right_ft, left_ft, right_bump,
-        //                                left_bump, gyro, accelerometer, jnt_command, status);
         if (status != 0)
         {
-            cout << "Node was shut down due to Ankle Collision!" << endl;
-            return false;
+            std::cout << "Node was shut down due to Ankle Collision!" << std::endl;
+            is_walking_ = false;
+            break;
         }
+
         computeLowerLimbJointMotion(jnt_command, iter);
         sendGaitMotorCommands();
         publish_trigger_pub_.publish(std_msgs::Empty());
+
+        gait_iter_++;
         rate_.sleep();
-        iter++;
     }
-    robot->resetTraj();
-    res.result = true;
-    return true;
 }
 
 bool GaitManager::computeLowerLimbJointMotion(double jnt_command[], int iter)

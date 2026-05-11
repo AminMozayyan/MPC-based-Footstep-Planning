@@ -16,6 +16,12 @@ Robot::Robot(ros::NodeHandle *nh, std::string config_path, bool simulation)
 
     bumpSensorCalibrated_ = false; // doc
     isTrajAvailable_ = false;      // doc
+    has_config_offset_ = false;
+    config_x_offset_ = 0.0;
+    current_config_x_offset_ = 0.0;
+    last_left_foot_ = Eigen::Vector3d(0.0, 0.1, 0.0);
+    last_right_foot_ = Eigen::Vector3d(0.0, -0.1, 0.0);
+    has_last_feet_ = false;
     dataSize_ = 0;
     bumpBiasR_ = -56.0;
     bumpBiasL_ = -57.75;
@@ -669,81 +675,281 @@ bool Robot::trajGen(int step_count, double t_step, double alpha, double t_double
                     double theta, double ankle_height, double step_height, double slope,
                     double com_offset, bool is_config)
 {
-    /*
-        ROS service for generating robot COM & ankles trajectories
-    */
-
     string walk_config_path = ros::package::getPath("gait_planner") + "/config/walk_config.json";
     std::ifstream f(walk_config_path);
     json walk_config = json::parse(f);
+
     dt_ = dt;
     int sign = 1;
 
     if (!is_config)
         step_count += 2;
-    else  
+    else
         step_count = walk_config["footsteps"].size();
 
     vector<Vector3d> ankle_rf(step_count);
     vector<Vector3d> dcm_rf(step_count);
     vector<double> theta_rf(step_count);
 
-    if (is_config == true)
-    { 
-        loadConfig(walk_config, step_count, ankle_rf, dcm_rf, theta_rf, COM_height, t_double_support, t_step, alpha, ankle_height, com_offset);
+    bool is_append_segment = is_config && has_config_offset_;
+
+    if (is_config)
+    {
+        loadConfig(walk_config, step_count, ankle_rf, dcm_rf, theta_rf,
+                   COM_height, t_double_support, t_step, alpha, ankle_height, com_offset);
     }
     else
     {
         sign = abs(step_length) / step_length;
-        stepPlanner_->generateFootSteps(ankle_rf, dcm_rf, step_length, step_width, step_height, step_count, theta, com_offset);
+        stepPlanner_->generateFootSteps(ankle_rf, dcm_rf, step_length, step_width,
+                                        step_height, step_count, theta, com_offset);
     }
+
+    // if (is_append_segment)
+    // {
+    //     int trim_tail_samples = int(t_double_support / dt);  // فعلاً 20 sample
+
+    //     auto trim_tail_vec3 = [&](std::vector<Eigen::Vector3d>& v)
+    //     {
+    //         if ((int)v.size() > trim_tail_samples)
+    //             v.erase(v.end() - trim_tail_samples, v.end());
+    //     };
+
+    //     auto trim_tail_mat3 = [&](std::vector<Eigen::Matrix3d>& v)
+    //     {
+    //         if ((int)v.size() > trim_tail_samples)
+    //             v.erase(v.end() - trim_tail_samples, v.end());
+    //     };
+
+    //     auto trim_tail_int = [&](std::vector<int>& v)
+    //     {
+    //         if ((int)v.size() > trim_tail_samples)
+    //             v.erase(v.end() - trim_tail_samples, v.end());
+    //     };
+
+    //     trim_tail_vec3(CoMPos_);
+    //     trim_tail_vec3(zmpd_);
+    //     trim_tail_vec3(lAnklePos_);
+    //     trim_tail_vec3(rAnklePos_);
+    //     trim_tail_vec3(CoMDot_);
+
+    //     trim_tail_mat3(CoMRot_);
+    //     trim_tail_mat3(lAnkleRot_);
+    //     trim_tail_mat3(rAnkleRot_);
+
+    //     trim_tail_int(robotPhase_);
+
+    //     dataSize_ -= trim_tail_samples;
+
+    //     if (!trajSizes_.empty())
+    //         trajSizes_.back() = dataSize_;
+
+    //     std::cout << "[trajGen] trimmed previous final DS"
+    //             << " | trim_tail_samples: " << trim_tail_samples
+    //             << " | dataSize_: " << dataSize_
+    //             << std::endl;
+    // }
 
     COM_height_ = COM_height;
 
-    int trajectory_size = int(((step_count) * t_step) / dt);
-    DCMPlanner *trajectoryPlanner = new DCMPlanner(COM_height, t_step, t_double_support, dt, step_count, alpha, theta);
-    Ankle *anklePlanner = new Ankle(t_step, t_double_support, ankle_height, alpha, step_count - 2, dt, theta, slope);
-    
+    int trajectory_size = int((step_count * t_step) / dt);
+
+    DCMPlanner *trajectoryPlanner =
+        new DCMPlanner(COM_height, t_step, t_double_support, dt, step_count, alpha, theta);
+
+    Ankle *anklePlanner =
+        new Ankle(t_step, t_double_support, ankle_height, alpha, step_count - 2, dt, theta, slope);
+
     trajectoryPlanner->setFoot(dcm_rf, -sign);
+
+    if (is_config && !CoMPos_.empty())
+    {
+        trajectoryPlanner->setCoMInit(CoMPos_.back());
+    }
+
     xiDesired_ = trajectoryPlanner->getXiTrajectory();
-    zmpd_ = trajectoryPlanner->getZMP();
+
     anklePlanner->updateFoot(ankle_rf, -sign);
     anklePlanner->generateTrajectory();
+
     onlineWalk_->setDt(dt);
     onlineWalk_->setBaseHeight(COM_height);
     onlineWalk_->setBaseIdle(shank_ + thigh_);
     onlineWalk_->setBaseLowHeight(0.65);
-    onlineWalk_->setInitCoM(Vector3d(0.0, 0.0, COM_height));
+
+    if (!CoMPos_.empty())
+    {
+        onlineWalk_->setInitCoM(CoMPos_.back());
+    }
+    else
+    {
+        onlineWalk_->setInitCoM(Vector3d(0.0, 0.0, COM_height));
+    }
+
+    // double segment_x_shift = is_config ? current_config_x_offset_ : 0.0;
 
     vector<Vector3d> com_pos = trajectoryPlanner->getCoM();
-    CoMPos_.insert(CoMPos_.end(), com_pos.begin(), com_pos.end());
+
+    std::vector<Eigen::Vector3d> zmp = trajectoryPlanner->getZMP();
     vector<Vector3d> lank = anklePlanner->getTrajectoryL();
-    lAnklePos_.insert(lAnklePos_.end(), lank.begin(), lank.end());
     vector<Vector3d> rank = anklePlanner->getTrajectoryR();
-    rAnklePos_.insert(rAnklePos_.end(), rank.begin(), rank.end());
 
     vector<Matrix3d> com_rot = trajectoryPlanner->yawRotGen();
-    CoMRot_.insert(CoMRot_.end(), com_rot.begin(), com_rot.end());
     vector<Matrix3d> lank_rot = anklePlanner->getRotTrajectoryL();
-    lAnkleRot_.insert(lAnkleRot_.end(), lank_rot.begin(), lank_rot.end());
     vector<Matrix3d> rank_rot = anklePlanner->getRotTrajectoryR();
-    rAnkleRot_.insert(rAnkleRot_.end(), rank_rot.begin(), rank_rot.end());
 
     vector<int> robot_state = anklePlanner->getRobotState();
-    robotPhase_.insert(robotPhase_.end(), robot_state.begin(), robot_state.end()); 
-    CoMDot_ = trajectoryPlanner->get_CoMDot();
+
+    vector<Vector3d> com_dot = trajectoryPlanner->get_CoMDot();
+
+    // if (is_append_segment)
+    // {
+    //     int skip_samples = int(t_step / dt);
+
+    //     auto erase_prefix_vec3 = [&](std::vector<Eigen::Vector3d>& v)
+    //     {
+    //         if ((int)v.size() > skip_samples)
+    //             v.erase(v.begin(), v.begin() + skip_samples);
+    //     };
+
+    //     auto erase_prefix_mat3 = [&](std::vector<Eigen::Matrix3d>& v)
+    //     {
+    //         if ((int)v.size() > skip_samples)
+    //             v.erase(v.begin(), v.begin() + skip_samples);
+    //     };
+
+    //     auto erase_prefix_int = [&](std::vector<int>& v)
+    //     {
+    //         if ((int)v.size() > skip_samples)
+    //             v.erase(v.begin(), v.begin() + skip_samples);
+    //     };
+
+    //     erase_prefix_vec3(com_pos);
+    //     erase_prefix_vec3(zmp);
+    //     erase_prefix_vec3(lank);
+    //     erase_prefix_vec3(rank);
+    //     erase_prefix_vec3(com_dot);
+
+    //     erase_prefix_mat3(com_rot);
+    //     erase_prefix_mat3(lank_rot);
+    //     erase_prefix_mat3(rank_rot);
+
+    //     erase_prefix_int(robot_state);
+
+    //     trajectory_size -= skip_samples;
+
+    //     std::cout << "[trajGen] append segment: skipped initial DS"
+    //             << " | skip_samples: " << skip_samples
+    //             << " | new trajectory_size: " << trajectory_size
+    //             << std::endl;
+    // }
+
+    std::cout << "[trajGen] before zmp append"
+            << " | zmpd_: " << zmpd_.size()
+            << " | new zmp: " << zmp.size()
+            << std::endl;
+
+    if (!CoMPos_.empty() && !com_pos.empty())
+    {
+        std::cout << "[boundary COM]"
+                << " prev: " << CoMPos_.back().transpose()
+                << " | new: " << com_pos.front().transpose()
+                << " | diff: " << (com_pos.front() - CoMPos_.back()).transpose()
+                << std::endl;
+    }
+
+    if (!lAnklePos_.empty() && !lank.empty())
+    {
+        std::cout << "[boundary LAnkle]"
+                << " prev: " << lAnklePos_.back().transpose()
+                << " | new: " << lank.front().transpose()
+                << " | diff: " << (lank.front() - lAnklePos_.back()).transpose()
+                << std::endl;
+    }
+
+    if (!rAnklePos_.empty() && !rank.empty())
+    {
+        std::cout << "[boundary RAnkle]"
+                << " prev: " << rAnklePos_.back().transpose()
+                << " | new: " << rank.front().transpose()
+                << " | diff: " << (rank.front() - rAnklePos_.back()).transpose()
+                << std::endl;
+    }
+
+    zmpd_.insert(zmpd_.end(), zmp.begin(), zmp.end());
+    CoMPos_.insert(CoMPos_.end(), com_pos.begin(), com_pos.end());
+    lAnklePos_.insert(lAnklePos_.end(), lank.begin(), lank.end());
+    rAnklePos_.insert(rAnklePos_.end(), rank.begin(), rank.end());
+
+    CoMRot_.insert(CoMRot_.end(), com_rot.begin(), com_rot.end());
+    lAnkleRot_.insert(lAnkleRot_.end(), lank_rot.begin(), lank_rot.end());
+    rAnkleRot_.insert(rAnkleRot_.end(), rank_rot.begin(), rank_rot.end());
+
+    robotPhase_.insert(robotPhase_.end(), robot_state.begin(), robot_state.end());
+    CoMDot_.insert(CoMDot_.end(), com_dot.begin(), com_dot.end());
 
     dataSize_ += trajectory_size;
-    
     trajSizes_.push_back(dataSize_);
+
+    std::cout << "[trajGen] appended trajectory"
+              << " | trajectory_size: " << trajectory_size
+              << " | dataSize_: " << dataSize_
+              << " | CoMPos_: " << CoMPos_.size()
+              << " | zmpd_: " << zmpd_.size()
+              << " | trajSizes_.back(): " << trajSizes_.back()
+              << std::endl;
+
     robotControlState_.push_back(WALK);
     isTrajAvailable_ = true;
+
+    std::ofstream traj_file;
+    traj_file.open("/home/mozayyan/gait_traj_debug.csv");
+
+    std::cout << "[debug] writing csv..." << std::endl;
+
+    traj_file << "i,com_x,com_y,com_z,lx,ly,lz,rx,ry,rz,zmp_x,zmp_y,zmp_z,phase\n";
+
+    for (size_t i = 0; i < CoMPos_.size(); i++)
+    {
+        traj_file
+            << i << ","
+            << CoMPos_[i](0) << ","
+            << CoMPos_[i](1) << ","
+            << CoMPos_[i](2) << ","
+
+            << lAnklePos_[i](0) << ","
+            << lAnklePos_[i](1) << ","
+            << lAnklePos_[i](2) << ","
+
+            << rAnklePos_[i](0) << ","
+            << rAnklePos_[i](1) << ","
+            << rAnklePos_[i](2) << ","
+
+            << zmpd_[i](0) << ","
+            << zmpd_[i](1) << ","
+            << zmpd_[i](2) << ","
+
+            << robotPhase_[i]
+            << "\n";
+    }
+
+    traj_file.close();
+
+    std::cout << "[debug] csv written!" << std::endl;
 
     return true;
 }
 
-void Robot::loadConfig(json& walk_config, int& step_count, vector<Vector3d>& ankle_rf, vector<Vector3d>& dcm_rf, vector<double>& theta_rf,
-                       double& COM_height, double& t_double_support, double& t_step, double& alpha, double& ankle_height, double& com_offset)
+void Robot::loadConfig(json& walk_config, int& step_count,
+                       vector<Vector3d>& ankle_rf,
+                       vector<Vector3d>& dcm_rf,
+                       vector<double>& theta_rf,
+                       double& COM_height,
+                       double& t_double_support,
+                       double& t_step,
+                       double& alpha,
+                       double& ankle_height,
+                       double& com_offset)
 { 
     COM_height = walk_config["COM_height"]; 
     t_double_support = walk_config["t_double_support"]; 
@@ -752,18 +958,65 @@ void Robot::loadConfig(json& walk_config, int& step_count, vector<Vector3d>& ank
     ankle_height = walk_config["ankle_height"]; 
     com_offset = walk_config["com_offset"];
 
+    bool is_append_config = has_config_offset_;
+    double x_offset = is_append_config ? config_x_offset_ : 0.0;
+
+    current_config_x_offset_ = x_offset;
+
     for (int i = 0; i < step_count; i++)
     {
-        ankle_rf[i] << walk_config["footsteps"][i][0], walk_config["footsteps"][i][1], walk_config["footsteps"][i][2];
+        ankle_rf[i] << walk_config["footsteps"][i][0],
+                       walk_config["footsteps"][i][1],
+                       walk_config["footsteps"][i][2];
+
         theta_rf[i] = walk_config["footsteps"][i][3];
 
+        ankle_rf[i](0) += x_offset;
+    }
+
+    if (is_append_config && has_last_feet_ && step_count >= 2)
+    {
+        ankle_rf[0] = last_left_foot_;
+        ankle_rf[1] = last_right_foot_;
+    }
+
+    for (int i = 0; i < step_count; i++)
+    {
         dcm_rf[i] = ankle_rf[i];
         dcm_rf[i](1) -= pow(-1, i) * com_offset;
     }
-    dcm_rf[0] = Vector3d::Zero(3);
-    dcm_rf[step_count-1] = 0.5 * (ankle_rf[step_count-1] + ankle_rf[step_count-2]);
-}
 
+    if (is_append_config && step_count >= 2)
+        dcm_rf[0] = 0.5 * (ankle_rf[0] + ankle_rf[1]);
+    else
+        dcm_rf[0] = Vector3d::Zero(3);
+
+    dcm_rf[step_count - 1] =
+        0.5 * (ankle_rf[step_count - 1] + ankle_rf[step_count - 2]);
+
+    config_x_offset_ = ankle_rf[step_count - 1](0);
+    has_config_offset_ = true;
+
+    for (int i = 0; i < step_count; i++)
+    {
+        if (i % 2 == 0)
+            last_left_foot_ = ankle_rf[i];
+        else
+            last_right_foot_ = ankle_rf[i];
+    }
+
+    has_last_feet_ = true;
+
+    std::cout << "[loadConfig offset]"
+              << " is_append: " << is_append_config
+              << " | current_config_x_offset_: " << current_config_x_offset_
+              << " | config_x_offset_: " << config_x_offset_
+              << " | first_L: " << ankle_rf[0].transpose()
+              << " | first_R: " << ankle_rf[1].transpose()
+              << " | last_L: " << last_left_foot_.transpose()
+              << " | last_R: " << last_right_foot_.transpose()
+              << std::endl;
+}
 void Robot::publishFootStep(const vector<Vector3d>& ankle_rf, const int &step_count)
 {
     geometry_msgs::Point foot_step;
@@ -802,6 +1055,14 @@ bool Robot::generalTrajGen(double dt, double time, double init_com_pos[3], doubl
     
     vector<Vector3d> com_pos = motion_planner->getCOMPos();
     CoMPos_.insert(CoMPos_.end(), com_pos.begin(), com_pos.end());
+
+    Vector3d zmp_hold(0.0, 0.0, 0.0);
+    if (!zmpd_.empty())
+        zmp_hold = zmpd_.back();
+
+    for (size_t i = 0; i < com_pos.size(); i++)
+        zmpd_.push_back(zmp_hold);
+
     vector<Matrix3d> com_rot = motion_planner->getCOMOrient();
     CoMRot_.insert(CoMRot_.end(), com_rot.begin(), com_rot.end());
 
@@ -819,29 +1080,29 @@ bool Robot::generalTrajGen(double dt, double time, double init_com_pos[3], doubl
     robotPhase_.insert(robotPhase_.end(), robot_state.begin(), robot_state.end()); 
 
     //////
-    int N = std::min({
-        (int)xiDesired_.size(),
-        (int)com_pos.size(),
-        (int)zmpd_.size(),
-        (int)robot_state.size()
-    });
+    // int N = std::min({
+    //     (int)xiDesired_.size(),
+    //     (int)com_pos.size(),
+    //     (int)zmpd_.size(),
+    //     (int)robot_state.size()
+    // });
 
-    std::cout << "time,"
-            << "dcm_x,dcm_y,dcm_z,"
-            << "com_x,com_y,com_z,"
-            << "zmp_x,zmp_y,zmp_z,"
-            << "phase\n";
+    // std::cout << "time,"
+    //         << "dcm_x,dcm_y,dcm_z,"
+    //         << "com_x,com_y,com_z,"
+    //         << "zmp_x,zmp_y,zmp_z,"
+    //         << "phase\n";
 
-    for (int i = 0; i < N; i++)
-    {
-        double t = i * dt_;
-        std::cout << t << ","
-                << xiDesired_[i].x() << "," << xiDesired_[i].y() << "," << xiDesired_[i].z() << ","
-                << com_pos[i].x() << "," << com_pos[i].y() << "," << com_pos[i].z() << ","
-                << zmpd_[i].x() << "," << zmpd_[i].y() << "," << zmpd_[i].z() << ","
-                << robot_state[i]
-                << "\n";
-    }
+    // for (int i = 0; i < N; i++)
+    // {
+    //     double t = i * dt_;
+    //     std::cout << t << ","
+    //             << xiDesired_[i].x() << "," << xiDesired_[i].y() << "," << xiDesired_[i].z() << ","
+    //             << com_pos[i].x() << "," << com_pos[i].y() << "," << com_pos[i].z() << ","
+    //             << zmpd_[i].x() << "," << zmpd_[i].y() << "," << zmpd_[i].z() << ","
+    //             << robot_state[i]
+    //             << "\n";
+    // }
     ////////
 
     dataSize_ += trajectory_size;
@@ -1094,17 +1355,36 @@ bool Robot::getJointAngs(int iter, double config[12], double jnt_vel[12], double
         int traj_index = findTrajIndex(trajSizes_, trajSizes_.size(), iter);
 
         ControlState robot_cs = robotControlState_[traj_index];
+
+        if (iter >= 2000 && iter <= 2050)
+        {
+            std::cout << "[debug ref] iter: " << iter
+                    << " | COM: " << CoMPos_[iter].transpose()
+                    << " | L: " << lAnklePos_[iter].transpose()
+                    << " | R: " << rAnklePos_[iter].transpose()
+                    << " | phase: " << robotPhase_[iter]
+                    << std::endl;
+        }
         
         // Set current zmp position if robot walks
         if (robot_cs == WALK)
         {
-            int zmp_iter = iter;
-            if (traj_index != 0)
-                zmp_iter = iter - trajSizes_[traj_index - 1];
-            currentZMPPos_ = zmpd_[zmp_iter];
+            if (iter >= 0 && iter < zmpd_.size())
+            {
+                currentZMPPos_ = zmpd_[iter];
+            }
+            else
+            {
+                std::cout << "[ZMP ERROR] iter out of range"
+                        << " | iter: " << iter
+                        << " | zmpd_.size(): " << zmpd_.size()
+                        << std::endl;
+
+                currentZMPPos_ = zmpd_.back();
+            }
         }
 
-        cout << currentCommandedCoMPos_(0) << ", " << currentCommandedCoMPos_(1) << ", " << currentCommandedCoMPos_(2) << ", ";
+        //cout << currentCommandedCoMPos_(0) << ", " << currentCommandedCoMPos_(1) << ", " << currentCommandedCoMPos_(2) << ", ";
         // cout << " legs" << ", " << currentCommandedLeftAnklePos_(0) << ", " << currentCommandedRightAnklePos_(0) << ", ";
         // cout << currentCommandedRightAnklePos_(0) << ", " << currentCommandedRightAnklePos_(1) << ", " << currentCommandedRightAnklePos_(2) << endl;  
 
@@ -1231,16 +1511,23 @@ bool Robot::resetTraj()
     rAnkleRot_.clear();
     rightArmswingTraj_.clear();
     leftArmswingTraj_.clear();
+    zmpd_.clear();
 
 
     trajSizes_.clear();
     robotControlState_.clear();
+    config_x_offset_ = 0.0;
+    current_config_x_offset_ = 0.0;
+    has_config_offset_ = false;
     dataSize_ = 0;
     rSole_ << 0.0, -torso_, 0.0;
     lSole_ << 0.0, torso_, 0.0;
     isTrajAvailable_ = false;
     Vector3d position(0.0, 0.0, 0.0);
     links_[0]->initPose(position, Matrix3d::Identity(3, 3));
+    last_left_foot_ = Eigen::Vector3d(0.0, 0.1, 0.0);
+    last_right_foot_ = Eigen::Vector3d(0.0, -0.1, 0.0);
+    has_last_feet_ = false;
 
     return true;
 }

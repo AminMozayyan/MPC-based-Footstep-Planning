@@ -151,7 +151,12 @@ private:
     double soleMinDist_;
     double dt_;
     double totalMass_;
-
+    double config_x_offset_;
+    bool has_config_offset_;
+    double current_config_x_offset_;
+    Eigen::Vector3d last_left_foot_;
+    Eigen::Vector3d last_right_foot_;
+    bool has_last_feet_;
     double joints_[12];
 
 

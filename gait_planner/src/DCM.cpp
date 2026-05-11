@@ -63,6 +63,14 @@ void DCMPlanner::updateXiPoints()
     this->updateOnlineDS(Vector3d(0, 0, 0), currentStepNum_);
 }
 
+void DCMPlanner::setCoMInit(const Eigen::Vector3d& com_init)
+{
+    CoMInit_ = com_init;
+    CoMIntegral_ = Eigen::Vector3d::Zero();
+    prevXi_ = Eigen::Vector3d::Zero();
+    prevXiDot_ = Eigen::Vector3d::Zero();
+}
+
 void DCMPlanner::updateXiEoS(int init_step)
 {
     xiEOS_.resize(stepCount_);
