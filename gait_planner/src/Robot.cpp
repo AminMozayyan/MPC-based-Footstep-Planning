@@ -701,8 +701,29 @@ bool Robot::trajGen(int step_count, double t_step, double alpha, double t_double
     COM_height_ = COM_height;
 
     int trajectory_size = int(((step_count) * t_step) / dt);
-    DCMPlanner *trajectoryPlanner = new DCMPlanner(COM_height, t_step, t_double_support, dt, step_count, alpha, theta);
-    Ankle *anklePlanner = new Ankle(t_step, t_double_support, ankle_height, alpha, step_count - 2, dt, theta, slope);
+    // For config-based walking, each footstep can have its own yaw angle.
+    // The legacy planners use yawSign_ internally; the old config path passed a negated
+    // scalar theta from GaitManager. To preserve the same sign convention, negate the
+    // per-footstep yaw values before passing them to the planners.
+    vector<double> planner_theta_rf = theta_rf;
+    if (is_config)
+    {
+        for (double &th : planner_theta_rf)
+            th = -th;
+    }
+
+    DCMPlanner *trajectoryPlanner = nullptr;
+    Ankle *anklePlanner = nullptr;
+    if (is_config)
+    {
+        trajectoryPlanner = new DCMPlanner(COM_height, t_step, t_double_support, dt, step_count, alpha, planner_theta_rf);
+        anklePlanner = new Ankle(t_step, t_double_support, ankle_height, alpha, step_count - 2, dt, planner_theta_rf, slope);
+    }
+    else
+    {
+        trajectoryPlanner = new DCMPlanner(COM_height, t_step, t_double_support, dt, step_count, alpha, theta);
+        anklePlanner = new Ankle(t_step, t_double_support, ankle_height, alpha, step_count - 2, dt, theta, slope);
+    }
     
     trajectoryPlanner->setFoot(dcm_rf, -sign);
     xiDesired_ = trajectoryPlanner->getXiTrajectory();
@@ -933,12 +954,25 @@ int Robot::OnlineDCMTrajGen(int step_count, double t_step, double alpha, double 
     if (DCMPlanner_ != nullptr) {
         delete DCMPlanner_;
     }
-    DCMPlanner_ = new DCMPlanner(COM_height, t_step, t_double_support, dt, foot_step_size, alpha, theta);
+    vector<double> planner_theta_rf = theta_rf;
+    if (is_config)
+    {
+        for (double &th : planner_theta_rf)
+            th = -th;
+    }
+
+    if (is_config)
+        DCMPlanner_ = new DCMPlanner(COM_height, t_step, t_double_support, dt, foot_step_size, alpha, planner_theta_rf);
+    else
+        DCMPlanner_ = new DCMPlanner(COM_height, t_step, t_double_support, dt, foot_step_size, alpha, theta);
 
     if (anklePlanner_ != nullptr) {
         delete anklePlanner_;
     }
-    anklePlanner_ = new Ankle(t_step, t_double_support, ankle_height, alpha, step_count, dt, theta, slope);
+    if (is_config)
+        anklePlanner_ = new Ankle(t_step, t_double_support, ankle_height, alpha, step_count, dt, planner_theta_rf, slope);
+    else
+        anklePlanner_ = new Ankle(t_step, t_double_support, ankle_height, alpha, step_count, dt, theta, slope);
 
     int trajectory_size = DCMPlanner_->getLength();
     

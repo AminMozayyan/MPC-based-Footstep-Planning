@@ -1,11 +1,14 @@
 #pragma once
 
 #include "MinJerk.h"
+#include <algorithm>
 
 class Ankle : private MinJerk
 {
 public:
     Ankle(double step_time, double ds_time, double height, double alpha, short int num_step, double dt, double theta, double slope);
+    Ankle(double step_time, double ds_time, double height, double alpha, short int num_step, double dt,
+          const vector<double>& theta_rf, double slope);
     ~Ankle();
     void updateFoot(const vector<Vector3d>& ankle_rf, int sign);
     void updateOnlineFoot(const vector<Vector3d>& foot_pose, int sign, const vector<Vector3d>& foot_euler = vector<Vector3d>());
@@ -38,6 +41,8 @@ private:
     bool leftLast_;
     double height_;
     double theta_;
+    vector<double> thetaRF_;
+    bool useThetaVector_;
     double slope_;
     int yawSign_;
     int length_;
@@ -62,5 +67,7 @@ private:
     int currentStepNum_;
 
     void updateTrajectory(bool left_first);
+    double getFootYaw(int foot_step_idx) const;
+    void buildFootStepEuler(int sign);
     
 };

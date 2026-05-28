@@ -6,6 +6,8 @@ DCMPlanner::DCMPlanner(double deltaZ, double stepTime, double doubleSupportTime,
     this->tStep_ = stepTime;
     this->tDS_ = doubleSupportTime;
     this->theta_ = theta;
+    this->thetaRF_.clear();
+    this->useThetaVector_ = false;
     if (alpha > 0.0 && alpha < 1.0)
         this->alpha_ = alpha;
     else
@@ -19,6 +21,28 @@ DCMPlanner::DCMPlanner(double deltaZ, double stepTime, double doubleSupportTime,
     this->currentStepNum_ = 0;
     this->currentZMP_ = Vector3d(0, 0, 0);
     this->prevXi_ = Vector3d(0, 0, 0);
+}
+
+DCMPlanner::DCMPlanner(double deltaZ, double stepTime, double doubleSupportTime, double dt,
+                       int stepCount, double alpha, const vector<double>& theta_rf)
+    : DCMPlanner(deltaZ, stepTime, doubleSupportTime, dt, stepCount, alpha, 0.0)
+{
+    this->thetaRF_ = theta_rf;
+    this->useThetaVector_ = true;
+}
+
+double DCMPlanner::getFootYaw(int foot_step_idx) const
+{
+    if (useThetaVector_ && !thetaRF_.empty())
+    {
+        int idx = std::max(0, std::min(foot_step_idx, static_cast<int>(thetaRF_.size()) - 1));
+        return yawSign_ * thetaRF_[idx];
+    }
+
+    // Backward-compatible behaviour for the old constant-turn interface.
+    if (foot_step_idx <= 1)
+        return 0.0;
+    return yawSign_ * (foot_step_idx - 1) * theta_;
 }
 
 void DCMPlanner::setFoot(const vector<Vector3d>& rF, int sign)
@@ -311,60 +335,36 @@ const vector<Vector3d>& DCMPlanner::getZMP()
 const vector<Matrix3d>& DCMPlanner::yawRotGen()
 {
     yawRotation_.resize(length_);
-    double ini_theta;
-    double end_theta;
 
-    for (int j = 0; j < tStep_ / dt_; j++)
-        yawRotation_[j] = AngleAxisd(0, Vector3d::UnitZ());
+    const int samples_per_step = int(tStep_ / dt_);
+    if (samples_per_step <= 0)
+        return yawRotation_;
 
-    for (int i = 1; i < stepCount_ - 1; i++)
+    for (int step = 0; step < stepCount_; ++step)
     {
-        ini_theta = this->yawSign_ * ((i - 1) * theta_ + (i - 2) * theta_) / 2; //
-        end_theta = this->yawSign_ * ((i - 1) * theta_ + i * theta_) / 2;       //
-
-        if (i == 1)
-            ini_theta = 0;
-        if (i == stepCount_ - 2)
-            end_theta = this->yawSign_ * (stepCount_ - 3) * theta_; //
+        const double ini_theta = getFootYaw(step);
+        const double end_theta = getFootYaw(std::min(step + 1, stepCount_ - 1));
         vector<double> coef = MinJerk::cubicInterpolate<double>(ini_theta, end_theta, 0, 0, tStep_);
-        for (int j = 0; j < tStep_ / dt_; j++)
+
+        for (int j = 0; j < samples_per_step; ++j)
         {
-            double theta_traj = coef[0] + coef[1] * j * dt_ + coef[2] * pow(j * dt_, 2) + coef[3] * pow(j * dt_, 3);
-            yawRotation_[int((i)*tStep_ / dt_ + j)] = AngleAxisd(theta_traj, Vector3d::UnitZ());
+            int idx = step * samples_per_step + j;
+            if (idx >= length_)
+                break;
+            double t = j * dt_;
+            double theta_traj = coef[0] + coef[1] * t + coef[2] * pow(t, 2) + coef[3] * pow(t, 3);
+            yawRotation_[idx] = AngleAxisd(theta_traj, Vector3d::UnitZ());
         }
-    }
-
-    for (int j = 0; j < tStep_ / dt_; j++)
-    {
-
-        yawRotation_[int((stepCount_ - 1) * tStep_ / dt_ + j)] = yawRotation_[int((stepCount_ - 1) * tStep_ / dt_ + j) - 1];
     }
     return yawRotation_;
 }
 
 void DCMPlanner::calculateRotCoeffs() {
     rotCoeffs_.resize(stepCount_);
-    double ini_theta, end_theta;
 
     for (int i = 0; i < stepCount_; i++) {
-        ini_theta = this->yawSign_ * ((i - 1) * theta_ + (i - 2) * theta_) / 2;
-        end_theta = this->yawSign_ * ((i - 1) * theta_ + i * theta_) / 2;
-
-        if (i == 0) {
-            ini_theta = 0;
-            end_theta = 0;
-        }
-        if (i == 1) {
-            ini_theta = 0;
-        }
-        if (i == stepCount_ - 2) {
-            end_theta = this->yawSign_ * (i - 1) * theta_;
-        }
-        if (i == stepCount_ - 1) {
-            ini_theta = this->yawSign_ * (i - 2) * theta_;
-            end_theta = this->yawSign_ * (i - 2) * theta_;
-        }
-        
+        const double ini_theta = getFootYaw(i);
+        const double end_theta = getFootYaw(std::min(i + 1, stepCount_ - 1));
         rotCoeffs_[i] = MinJerk::cubicInterpolate<double>(ini_theta, end_theta, 0, 0, tStep_);
     }
 }

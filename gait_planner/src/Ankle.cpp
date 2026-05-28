@@ -10,6 +10,8 @@ Ankle::Ankle(double step_time, double ds_time, double height, double alpha,
     this->height_ = height;
     this->dt_ = dt;
     this->theta_ = theta;
+    this->thetaRF_.clear();
+    this->useThetaVector_ = false;
     this->yawSign_ = 1;
     this->slope_ = slope;
     this->length_ = int(((stepCount_ + 2) * tStep_) / dt_);
@@ -22,6 +24,37 @@ Ankle::Ankle(double step_time, double ds_time, double height, double alpha,
     this->currentStepNum_ = 0;
 }
 
+Ankle::Ankle(double step_time, double ds_time, double height, double alpha,
+             short int num_step, double dt, const vector<double>& theta_rf, double slope)
+    : Ankle(step_time, ds_time, height, alpha, num_step, dt, 0.0, slope)
+{
+    this->thetaRF_ = theta_rf;
+    this->useThetaVector_ = true;
+}
+
+double Ankle::getFootYaw(int foot_step_idx) const
+{
+    if (useThetaVector_ && !thetaRF_.empty())
+    {
+        int idx = std::max(0, std::min(foot_step_idx, static_cast<int>(thetaRF_.size()) - 1));
+        return yawSign_ * thetaRF_[idx];
+    }
+
+    // Backward-compatible behaviour for the old constant-turn interface.
+    if (foot_step_idx <= 1)
+        return 0.0;
+    return yawSign_ * (foot_step_idx - 1) * theta_;
+}
+
+void Ankle::buildFootStepEuler(int sign)
+{
+    this->yawSign_ = sign;
+    const int size = footStepPos_.size();
+    footStepEuler_ = vector<Vector3d>(size, Vector3d::Zero());
+    for (int i = 0; i < size; ++i)
+        footStepEuler_[i](2) = getFootYaw(i);
+}
+
 void Ankle::updateFoot(const vector<Vector3d>& foot_pose, int sign)
 {
     /*
@@ -29,6 +62,7 @@ void Ankle::updateFoot(const vector<Vector3d>& foot_pose, int sign)
         should be given too.
     */
     footStepPos_ = foot_pose;
+    buildFootStepEuler(sign);
     if (foot_pose[0](1) > 0)
         leftFirst_ = true; // First Swing foot is left foot
     else
@@ -62,21 +96,12 @@ void Ankle::updateOnlineFoot(const vector<Vector3d>& foot_pose, int sign, const 
     footStepPos_ = foot_pose;
     
     if (foot_euler.empty())
-    {
-        int size = foot_pose.size();
-        footStepEuler_ = vector<Vector3d>(size, Vector3d::Zero());
-        for (int step = 0; step < size; ++step) {
-            if (step <= 1) {
-                footStepEuler_[step](2) = 0;
-            } else if (step == size - 1) {
-                footStepEuler_[step](2) = (step - 2) * theta_ * sign;
-            } else {
-                footStepEuler_[step](2) = (step - 1) * theta_ * sign;
-            }
-        }
-    }
+        buildFootStepEuler(sign);
     else
+    {
+        this->yawSign_ = sign;
         footStepEuler_ = foot_euler;
+    }
     
     if (foot_pose[0](1) > 0)
         leftFirst_ = true; // First Swing foot is left foot
@@ -162,15 +187,15 @@ void Ankle::updateTrajectory(bool left_first)
         {
             lFoot_[index] = footStepPos_[0];
             rFoot_[index] = footStepPos_[1];
-            lFootRot_[index] = AngleAxisd(0, Vector3d::UnitZ());
-            rFootRot_[index] = AngleAxisd(0, Vector3d::UnitZ());
+            lFootRot_[index] = Euler2Rot(footStepEuler_[0]);
+            rFootRot_[index] = Euler2Rot(footStepEuler_[1]);
         }
         else
         {
             lFoot_[index] = footStepPos_[1];
             rFoot_[index] = footStepPos_[0];
-            lFootRot_[index] = AngleAxisd(0, Vector3d::UnitZ());
-            rFootRot_[index] = AngleAxisd(0, Vector3d::UnitZ());
+            lFootRot_[index] = Euler2Rot(footStepEuler_[1]);
+            rFootRot_[index] = Euler2Rot(footStepEuler_[0]);
         }
         stateIndicatorArray_[index] = 1;
         index++;
@@ -184,16 +209,12 @@ void Ankle::updateTrajectory(bool left_first)
     {
         for (int step = 1; step < stepCount_ + 1; step++)
         {
-            double theta_ini = (step - 2) * theta_ * yawSign_;
-            double theta_end = (step)*theta_ * yawSign_;
+            double theta_ini = getFootYaw(step - 1);
+            double theta_end = getFootYaw(step + 1);
             double slope_ini = slope_;
             double slope_end = slope_;
-            if (step == 1)
-                theta_ini = 0;
             if (step == 1 || step == 2)
                 slope_ini = 0;
-            if (step == stepCount_)
-                theta_end = (step - 1) * theta_ * yawSign_;
             if (step % 2 == 0)
             { // Left is support, Right swings
                 for (int i = 0; i < init_ds_size; i++)
@@ -278,16 +299,12 @@ void Ankle::updateTrajectory(bool left_first)
         for (int step = 1; step < stepCount_ + 1; step++)
         {
 
-            double theta_ini = (step - 2) * theta_ * yawSign_;
-            double theta_end = (step)*theta_ * yawSign_;
+            double theta_ini = getFootYaw(step - 1);
+            double theta_end = getFootYaw(step + 1);
             double slope_ini = slope_;
             double slope_end = slope_;
-            if (step == 1)
-                theta_ini = 0;
             if (step == 1 || step == 2)
                 slope_ini = 0;
-            if (step == stepCount_)
-                theta_end = (step - 1) * theta_ * yawSign_;
 
             if (step % 2 != 0)
             { // Left is support, Right swings

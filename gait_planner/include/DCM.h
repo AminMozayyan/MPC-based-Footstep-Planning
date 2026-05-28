@@ -21,6 +21,7 @@
 #include <vector>
 #include "math.h"
 #include "cmath"
+#include <algorithm>
 
 #include "MinJerk.h"
 
@@ -49,6 +50,8 @@ public:
      */
     DCMPlanner(double deltaZ, double stepTime, double doubleSupportTime, double dt, 
                int stepCount = 6, double alpha = 0.5, double theta = 0.0);
+    DCMPlanner(double deltaZ, double stepTime, double doubleSupportTime, double dt,
+               int stepCount, double alpha, const vector<double>& theta_rf);
     
     /**
      * @brief Destructor for DCMPlanner.
@@ -118,6 +121,8 @@ private:
     double tDS_;
     double alpha_;
     double theta_;
+    vector<double> thetaRF_;
+    bool useThetaVector_;
 
     double dt_;
     int stepCount_;
@@ -178,6 +183,7 @@ private:
      * double support phase (xiDSI and xiDSE).
      */
     void updateXiDSPositions();
+    double getFootYaw(int foot_step_idx) const;
     
     /**
      * @brief Generates a minimum jerk trajectory between two given positions.
