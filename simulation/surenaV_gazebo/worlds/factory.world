@@ -21,55 +21,55 @@
 
 <model name="north_wall">
   <static>true</static>
-  <pose>0 12 1 0 0 0</pose>
+  <pose>0 8 1 0 0 0</pose>
   <link name="l">
-    <collision name="c"><geometry><box><size>24 0.4 2</size></box></geometry></collision>
-    <visual name="v"><geometry><box><size>24 0.4 2</size></box></geometry></visual>
+    <collision name="c"><geometry><box><size>16.4 0.4 2</size></box></geometry></collision>
+    <visual name="v"><geometry><box><size>16.4 0.4 2</size></box></geometry></visual>
   </link>
 </model>
 
 <model name="south_wall">
   <static>true</static>
-  <pose>0 -12 1 0 0 0</pose>
+  <pose>0 -8 1 0 0 0</pose>
   <link name="l">
-    <collision name="c"><geometry><box><size>24 0.4 2</size></box></geometry></collision>
-    <visual name="v"><geometry><box><size>24 0.4 2</size></box></geometry></visual>
+    <collision name="c"><geometry><box><size>16.4 0.4 2</size></box></geometry></collision>
+    <visual name="v"><geometry><box><size>16.4 0.4 2</size></box></geometry></visual>
   </link>
 </model>
 
 <model name="east_wall">
   <static>true</static>
-  <pose>12 0 1 0 0 0</pose>
+  <pose>8 0 1 0 0 0</pose>
   <link name="l">
-    <collision name="c"><geometry><box><size>0.4 24 2</size></box></geometry></collision>
-    <visual name="v"><geometry><box><size>0.4 24 2</size></box></geometry></visual>
+    <collision name="c"><geometry><box><size>0.4 16 2</size></box></geometry></collision>
+    <visual name="v"><geometry><box><size>0.4 16 2</size></box></geometry></visual>
   </link>
 </model>
 
 <model name="west_wall">
   <static>true</static>
-  <pose>-12 0 1 0 0 0</pose>
+  <pose>-8 0 1 0 0 0</pose>
   <link name="l">
-    <collision name="c"><geometry><box><size>0.4 24 2</size></box></geometry></collision>
-    <visual name="v"><geometry><box><size>0.4 24 2</size></box></geometry></visual>
+    <collision name="c"><geometry><box><size>0.4 16 2</size></box></geometry></collision>
+    <visual name="v"><geometry><box><size>0.4 16 2</size></box></geometry></visual>
   </link>
 </model>
 
 <model name="middle_wall">
   <static>true</static>
-  <pose>0 -8 1 0 0 1.57</pose>
+  <pose>0 -6 1 0 0 1.57</pose>
   <link name="l">
-    <collision name="c"><geometry><box><size>8 0.3 2</size></box></geometry></collision>
-    <visual name="v"><geometry><box><size>8 0.3 2</size></box></geometry></visual>
+    <collision name="c"><geometry><box><size>4 0.3 2</size></box></geometry></collision>
+    <visual name="v"><geometry><box><size>4 0.3 2</size></box></geometry></visual>
   </link>
 </model>
 
 <model name="middle_wall2">
   <static>true</static>
-  <pose>0 8 1 0 0 1.57</pose>
+  <pose>0 6 1 0 0 1.57</pose>
   <link name="l">
-    <collision name="c"><geometry><box><size>8 0.3 2</size></box></geometry></collision>
-    <visual name="v"><geometry><box><size>8 0.3 2</size></box></geometry></visual>
+    <collision name="c"><geometry><box><size>4 0.3 2</size></box></geometry></collision>
+    <visual name="v"><geometry><box><size>4 0.3 2</size></box></geometry></visual>
   </link>
 </model>
 
@@ -77,17 +77,12 @@
 
 <model name="shelf1">
   <include><uri>model://aws_robomaker_warehouse_ShelfE_01</uri></include>
-  <pose>8.5 7 0 0 0 1.57</pose>
-</model>
-
-<model name="shelf2">
-  <include><uri>model://aws_robomaker_warehouse_ShelfE_01</uri></include>
-  <pose>3 7 0 0 0 1.57</pose>
+  <pose>3.8 3.8 0 0 0 1.57</pose>
 </model>
 
 <model name="shelf3">
   <include><uri>model://aws_robomaker_warehouse_ShelfE_01</uri></include>
-  <pose>-6 7 0 0 0 1.57</pose>
+  <pose>-3 3 0 0 0 1.57</pose>
 </model>
 
 <!-- ================= TABLE AREA ================= -->
@@ -97,21 +92,16 @@
   <pose>-6 1 0 0 0 0</pose>
 </model>
 
-<model name="desk2">
-  <include><uri>model://aws_robomaker_warehouse_DeskC_01</uri></include>
-  <pose>6 -2 0 0 0 1.57</pose>
-</model>
-
 <!-- ================= STORAGE ================= -->
 
 <model name="box1">
   <include><uri>model://aws_robomaker_warehouse_ClutteringC_01</uri></include>
-  <pose>-5 -7 0 0 0 0</pose>
+  <pose>-3.5 -5 0 0 0 0</pose>
 </model>
 
 <model name="box2">
   <include><uri>model://aws_robomaker_warehouse_ClutteringA_01</uri></include>
-  <pose>-7 -7 0 0 0 0</pose>
+  <pose>-7 -5 0 0 0 0</pose>
 </model>
 
 <!-- ================= TOOLS ================= -->
@@ -123,12 +113,12 @@
 
 <model name="trash1">
   <include><uri>model://aws_robomaker_warehouse_TrashCanC_01</uri></include>
-  <pose>-2 4 0 0 0 0</pose>
+  <pose>-6 6 0 0 0 0</pose>
 </model>
 
 <model name="pallet1">
   <include><uri>model://aws_robomaker_warehouse_PalletJackB_01</uri></include>
-  <pose>8 -7 0 0 0 1.57</pose>
+  <pose>5 -3.1 0 0 0 1.57</pose>
 </model>
 
 <!-- ================= HUMAN CROWD CONTROLLER ================= -->
@@ -156,21 +146,21 @@
     <robot_name>surenaV</robot_name>
 
     <!-- محدوده حرکت، کمی داخل‌تر از دیوارهای ±12 -->
-    <xmin>-7.5</xmin>
-    <xmax>7.5</xmax>
+    <xmin>-8.5</xmin>
+    <xmax>8.5</xmax>
     <ymin>0.0</ymin>
     <ymax>12.0</ymax>
 
     <!-- سرعت طبیعی انسان -->
-    <v0>0.25</v0>
-    <v_max>0.45</v_max>
+    <v0>0.2</v0>
+    <v_max>0.4</v_max>
     <tau>0.1</tau>
     <max_acc>1.0</max_acc>
 
     <!-- فاصله گرفتن انسان‌ها از هم -->
-    <A_human>2.0</A_human>
-    <B_human>0.6</B_human>
-    <R_human>1.0</R_human>
+    <A_human>1.5</A_human>
+    <B_human>0.5</B_human>
+    <R_human>0.8</R_human>
     <hard_human_radius>1.0</hard_human_radius>
 
     <!-- فاصله گرفتن از ربات -->
@@ -180,15 +170,9 @@
     <hard_robot_radius>1.0</hard_robot_radius>
 
     <!-- فاصله گرفتن از موانع -->
-    <A_obs>5.0</A_obs>
-    <B_obs>0.5</B_obs>
-    <R_obs>1.0</R_obs>
-    <hard_obs_radius>2.0</hard_obs_radius>
-
-    <!-- دیوارها -->
-    <A_wall>4.0</A_wall>
-    <B_wall>0.5</B_wall>
-    <wall_margin>1.0</wall_margin>
+    <A_obs>4.0</A_obs>
+    <B_obs>0.4</B_obs>
+    <R_obs_margin>0.8</R_obs_margin>
 
     <!-- طبیعی‌تر شدن حرکت -->
     <wander_heading_noise>0.12</wander_heading_noise>

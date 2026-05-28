@@ -10,12 +10,12 @@ import math
 
 from geometry_msgs.msg import PointStamped
 from sensor_msgs.msg import Image, CameraInfo
-from std_msgs.msg import Float32MultiArray
 from cv_bridge import CvBridge
 from ultralytics import YOLO
 from gazebo_msgs.msg import ModelStates
 from tf.transformations import euler_from_quaternion
 from social_mpc_planner.msg import Human, HumanArray
+
 
 class HumanTrackerDepthNode:
 
@@ -32,22 +32,27 @@ class HumanTrackerDepthNode:
         self.tf_buffer = tf2_ros.Buffer()
         self.tf_listener = tf2_ros.TransformListener(self.tf_buffer)
 
-        self.camera_frame = "camera_depth_optical_frame"   
+        self.camera_frame = "camera_depth_optical_frame"
         self.base_frame = "base_link"
 
-        self.robot_name = "surenaV"
+        self.robot_name = rospy.get_param("~robot_name", "surenaV")
 
         self.robot_x = None
         self.robot_y = None
         self.robot_yaw = None
 
         self.last_valid_detection = {}
-        self.max_jump_distance = 0.7  
+        self.outlier_count = {}
+        self.max_jump_distance = rospy.get_param("~max_jump_distance", 0.7)
+        self.max_consecutive_outliers = rospy.get_param("~max_consecutive_outliers", 3)
 
         self.smooth_detection = {}
-        self.alpha = 0.5
+        self.alpha = rospy.get_param("~smoothing_alpha", 0.5)
 
-        self.human_model_keywords = ["person", "human", "actor"]
+        self.human_model_keywords = rospy.get_param(
+            "~human_model_keywords",
+            ["person", "human", "actor"]
+        )
 
         self.detected_human_pub = rospy.Publisher(
             "/detected_humans_world",
@@ -61,6 +66,15 @@ class HumanTrackerDepthNode:
             queue_size=10
         )
 
+        # Robot pose is published as HumanArray with one element:
+        # humans[0].id = 0, humans[0].x = robot_x, humans[0].y = robot_y
+        # header.frame_id = "world"
+        self.robot_pose_pub = rospy.Publisher(
+            "/robot_pose_world",
+            HumanArray,
+            queue_size=10
+        )
+
         rospy.Subscriber(
             "/gazebo/model_states",
             ModelStates,
@@ -68,94 +82,90 @@ class HumanTrackerDepthNode:
             queue_size=1
         )
 
-        # -------------------------------
-        # Camera intrinsics (from camera_info)
-        # -------------------------------
         self.fx = None
         self.fy = None
         self.cx0 = None
         self.cy0 = None
 
-        # -------------------------------
-        # Subscribers
-        # -------------------------------
         rospy.Subscriber("/camera/image_raw", Image, self.rgb_callback, queue_size=1)
         rospy.Subscriber("/camera/depth/image_raw", Image, self.depth_callback, queue_size=1)
-
         rospy.Subscriber("/camera/camera_info", CameraInfo, self.camera_info_callback, queue_size=1)
-
-        # -------------------------------
-        # Publisher
-        # -------------------------------
 
         rospy.loginfo("Human BEV Tracker Started")
 
+    def publish_robot_pose(self):
+        if self.robot_x is None or self.robot_y is None:
+            return
 
-            
+        msg = HumanArray()
+        msg.header.stamp = rospy.Time.now()
+        msg.header.frame_id = "world"
+
+        robot = Human()
+        robot.id = 0
+        robot.x = float(self.robot_x)
+        robot.y = float(self.robot_y)
+
+        msg.humans.append(robot)
+        self.robot_pose_pub.publish(msg)
+
     def filter_detection(self, track_id, x_world, y_world):
 
         if track_id not in self.last_valid_detection:
             self.last_valid_detection[track_id] = (x_world, y_world)
+            self.outlier_count[track_id] = 0
             return x_world, y_world
 
         last_x, last_y = self.last_valid_detection[track_id]
 
         dx = x_world - last_x
         dy = y_world - last_y
-
         jump = math.sqrt(dx * dx + dy * dy)
 
         if jump > self.max_jump_distance:
+            self.outlier_count[track_id] = self.outlier_count.get(track_id, 0) + 1
+
             rospy.logwarn(
-                "Outlier detected for id=%d | jump=%.3f m -> using previous value",
+                "Outlier detected for id=%d | jump=%.3f m | count=%d",
                 track_id,
-                jump
+                jump,
+                self.outlier_count[track_id]
             )
+
+            if self.outlier_count[track_id] >= self.max_consecutive_outliers:
+                rospy.logwarn(
+                    "Accepting new position for id=%d after consecutive outliers",
+                    track_id
+                )
+                self.last_valid_detection[track_id] = (x_world, y_world)
+                self.outlier_count[track_id] = 0
+                return x_world, y_world
+
             return last_x, last_y
 
         self.last_valid_detection[track_id] = (x_world, y_world)
+        self.outlier_count[track_id] = 0
         return x_world, y_world
 
-
-
-
-    # =====================================================
-    # camera info callback
-    # =====================================================
     def camera_info_callback(self, msg):
-
         K = msg.K
-
         self.fx = K[0]
         self.fy = K[4]
         self.cx0 = K[2]
         self.cy0 = K[5]
 
-
-    # =====================================================
-    # RGB
-    # =====================================================
     def rgb_callback(self, msg):
         self.rgb_frame = self.bridge.imgmsg_to_cv2(msg, "bgr8")
 
-
-    # =====================================================
-    # Depth
-    # =====================================================
     def depth_callback(self, msg):
         self.depth_frame = self.bridge.imgmsg_to_cv2(msg, "passthrough")
 
-
-    # =====================================================
-    # depth getter (robust)
-    # =====================================================
     def get_depth(self, cx, cy):
 
         if self.depth_frame is None:
             return -1
 
         h, w = self.depth_frame.shape[:2]
-
         values = []
 
         for dx in range(-2, 3):
@@ -165,7 +175,6 @@ class HumanTrackerDepthNode:
                 y = cy + dy
 
                 if 0 <= x < w and 0 <= y < h:
-
                     d = self.depth_frame[y, x]
 
                     if np.isfinite(d) and d > 0:
@@ -181,10 +190,6 @@ class HumanTrackerDepthNode:
 
         return float(depth)
 
-
-    # =====================================================
-    # pixel -> 3D camera frame
-    # =====================================================
     def pixel_to_3d(self, u, v, z):
 
         if self.fx is None:
@@ -194,7 +199,7 @@ class HumanTrackerDepthNode:
         y = (v - self.cy0) * z / self.fy
 
         return x, y, z
-    
+
     def camera_to_base(self, X, Y, Z):
 
         p_cam = PointStamped()
@@ -217,24 +222,22 @@ class HumanTrackerDepthNode:
         except Exception as e:
             rospy.logwarn("camera_to_base TF failed: %s", str(e))
             return None
-        
-    
+
     def smooth_position(self, track_id, x, y):
 
-            if track_id not in self.smooth_detection:
-                self.smooth_detection[track_id] = (x, y)
-                return x, y
+        if track_id not in self.smooth_detection:
+            self.smooth_detection[track_id] = (x, y)
+            return x, y
 
-            last_x, last_y = self.smooth_detection[track_id]
+        last_x, last_y = self.smooth_detection[track_id]
 
-            x_s = self.alpha * x + (1.0 - self.alpha) * last_x
-            y_s = self.alpha * y + (1.0 - self.alpha) * last_y
+        x_s = self.alpha * x + (1.0 - self.alpha) * last_x
+        y_s = self.alpha * y + (1.0 - self.alpha) * last_y
 
-            self.smooth_detection[track_id] = (x_s, y_s)
+        self.smooth_detection[track_id] = (x_s, y_s)
 
-            return x_s, y_s
-        
-    
+        return x_s, y_s
+
     def gazebo_callback(self, msg):
 
         # -----------------------------
@@ -250,8 +253,9 @@ class HumanTrackerDepthNode:
 
             q = pose.orientation
             quat = [q.x, q.y, q.z, q.w]
-
             _, _, self.robot_yaw = euler_from_quaternion(quat)
+
+            self.publish_robot_pose()
 
         # -----------------------------
         # Humans ground truth from Gazebo
@@ -271,7 +275,6 @@ class HumanTrackerDepthNode:
                 continue
 
             pose = msg.pose[i]
-            
 
             human = Human()
             human.id = int(i)
@@ -281,7 +284,6 @@ class HumanTrackerDepthNode:
             gazebo_msg.humans.append(human)
 
         self.gazebo_human_pub.publish(gazebo_msg)
-
 
     def base_to_world(self, x_base, y_base):
 
@@ -296,21 +298,6 @@ class HumanTrackerDepthNode:
 
         return x_world, y_world
 
-    # =====================================================
-    # 3D camera -> 2D ground map
-    # =====================================================
-    def to_map(self, x, z):
-
-    # ground plane assumption
-        x_map = x
-        y_map = z
-
-        return x_map, y_map
-
-
-    # =====================================================
-    # main loop
-    # =====================================================
     def run(self):
 
         rate = rospy.Rate(10)
@@ -349,15 +336,11 @@ class HumanTrackerDepthNode:
                     cx = int((x1 + x2) / 2)
                     cy = int((y1 + y2) / 2)
 
-                    # depth
                     z = self.get_depth(cx, cy)
 
                     if z <= 0:
                         continue
 
-                    # -----------------------------
-                    # BEV / 3D conversion
-                    # -----------------------------
                     xyz = self.pixel_to_3d(cx, cy, z)
 
                     if xyz is None:
@@ -370,7 +353,7 @@ class HumanTrackerDepthNode:
                     if base_point is None:
                         continue
 
-                    x_base, y_base, z_base = base_point
+                    x_base, y_base, _ = base_point
 
                     world_point = self.base_to_world(x_base, y_base)
 
@@ -379,7 +362,7 @@ class HumanTrackerDepthNode:
 
                     x_world, y_world = world_point
 
-                    X_world, Y_world = self.filter_detection(track_id,x_world,y_world)
+                    x_world, y_world = self.filter_detection(track_id, x_world, y_world)
                     x_world, y_world = self.smooth_position(track_id, x_world, y_world)
 
                     human = Human()
@@ -389,7 +372,6 @@ class HumanTrackerDepthNode:
 
                     detected_msg.humans.append(human)
 
-                    # draw
                     cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
                     cv2.circle(frame, (cx, cy), 5, (0, 0, 255), -1)
 

@@ -29,7 +29,7 @@ class FootstepMPCPlanner:
         self.gy = 0.0
         self.goal_received = False
 
-        self.N = 10
+        self.N = 20
 
         self.step_width = 0.11
         self.step_width_tol = 0.02
@@ -56,8 +56,8 @@ class FootstepMPCPlanner:
         self.obstacles = []
         self.max_obstacles = 9
         self.foot_clearance = 0.5
-        self.enable_static_obstacles = False
-        self.enable_dynamic_obstacles = False
+        self.enable_static_obstacles = True
+        self.enable_dynamic_obstacles = True
         self.W_backward = 10000.0
         self.W_obs_slack = 30000.0
         self.W_human_slack = 40000.0
@@ -114,7 +114,7 @@ class FootstepMPCPlanner:
             self.predicted_people_callback
         )
 
-        self.execution_steps = 2
+        self.execution_steps = 6
         self.use_receding_horizon = True
 
         self.goal_tolerance = 0.15
@@ -149,7 +149,7 @@ class FootstepMPCPlanner:
         nominal_step = 0.15
         N = int(math.ceil(dist / nominal_step))
 
-        N = max(4, min(N, 12))  
+        N = max(4, min(N, 20))  
         self.N = N
 
 
@@ -498,13 +498,13 @@ class FootstepMPCPlanner:
             self.print_footsteps(exec_footsteps)
             self.publish_markers(world_footsteps)
 
-            self.write_walk_config(exec_footsteps)
-            success = self.call_walk_service()
+            # self.write_walk_config(exec_footsteps)
+            # success = self.call_walk_service()
 
-            if not success:
-                return
+            # if not success:
+            #     return
 
-            rospy.sleep(0.2)  # allow odom to update
+            rospy.sleep(6.5)  # allow odom to update
 
             dist = self.distance_to_goal()
             rospy.loginfo("Distance to goal after batch: %.3f", dist)
