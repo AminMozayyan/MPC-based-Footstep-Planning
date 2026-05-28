@@ -3,3 +3,6 @@
 *.csv
 __pycache__
 build
+social_mpc_planner/scripts/gait_metric_results/
+social_mpc_planner/scripts/gait_stability_figures
+social_mpc_planner/scripts/gait_traj_debug.csv

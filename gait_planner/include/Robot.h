@@ -12,6 +12,7 @@
 #include "gait_planner/GeneralTraj.h"
 #include <std_msgs/Float64MultiArray.h>
 
+
 #include "json.hpp"
 #include "DCM.h"
 #include "Link.h"
@@ -31,6 +32,8 @@
 #include "fstream"
 #include <random>
 #include <chrono>
+#include <limits>
+#include <algorithm>
 
 using namespace std;
 using json = nlohmann::json;

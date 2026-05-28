@@ -1,5 +1,4 @@
 #include "Robot.h"
-#include <algorithm>
 
 Robot::Robot(ros::NodeHandle *nh, std::string config_path, bool simulation)
  : nh_(nh), robotConfigPath_(config_path), simulation_(simulation)
@@ -681,7 +680,7 @@ bool Robot::trajGen(int step_count, double t_step, double alpha, double t_double
 
     if (!is_config)
         step_count += 2;
-    else  
+    else
         step_count = walk_config["footsteps"].size();
 
     vector<Vector3d> ankle_rf(step_count);
@@ -689,22 +688,21 @@ bool Robot::trajGen(int step_count, double t_step, double alpha, double t_double
     vector<double> theta_rf(step_count);
 
     if (is_config == true)
-    { 
-        loadConfig(walk_config, step_count, ankle_rf, dcm_rf, theta_rf, COM_height, t_double_support, t_step, alpha, ankle_height, com_offset);
+    {
+        loadConfig(walk_config, step_count, ankle_rf, dcm_rf, theta_rf,
+                   COM_height, t_double_support, t_step, alpha, ankle_height, com_offset);
     }
     else
     {
         sign = abs(step_length) / step_length;
-        stepPlanner_->generateFootSteps(ankle_rf, dcm_rf, step_length, step_width, step_height, step_count, theta, com_offset);
+        stepPlanner_->generateFootSteps(ankle_rf, dcm_rf, step_length, step_width,
+                                        step_height, step_count, theta, com_offset);
     }
 
     COM_height_ = COM_height;
 
     int trajectory_size = int(((step_count) * t_step) / dt);
-    // For config-based walking, each footstep can have its own yaw angle.
-    // The legacy planners use yawSign_ internally; the old config path passed a negated
-    // scalar theta from GaitManager. To preserve the same sign convention, negate the
-    // per-footstep yaw values before passing them to the planners.
+
     vector<double> planner_theta_rf = theta_rf;
     if (is_config)
     {
@@ -714,22 +712,31 @@ bool Robot::trajGen(int step_count, double t_step, double alpha, double t_double
 
     DCMPlanner *trajectoryPlanner = nullptr;
     Ankle *anklePlanner = nullptr;
+
     if (is_config)
     {
-        trajectoryPlanner = new DCMPlanner(COM_height, t_step, t_double_support, dt, step_count, alpha, planner_theta_rf);
-        anklePlanner = new Ankle(t_step, t_double_support, ankle_height, alpha, step_count - 2, dt, planner_theta_rf, slope);
+        trajectoryPlanner = new DCMPlanner(COM_height, t_step, t_double_support,
+                                           dt, step_count, alpha, planner_theta_rf);
+
+        anklePlanner = new Ankle(t_step, t_double_support, ankle_height,
+                                 alpha, step_count - 2, dt, planner_theta_rf, slope);
     }
     else
     {
-        trajectoryPlanner = new DCMPlanner(COM_height, t_step, t_double_support, dt, step_count, alpha, theta);
-        anklePlanner = new Ankle(t_step, t_double_support, ankle_height, alpha, step_count - 2, dt, theta, slope);
+        trajectoryPlanner = new DCMPlanner(COM_height, t_step, t_double_support,
+                                           dt, step_count, alpha, theta);
+
+        anklePlanner = new Ankle(t_step, t_double_support, ankle_height,
+                                 alpha, step_count - 2, dt, theta, slope);
     }
-    
+
     trajectoryPlanner->setFoot(dcm_rf, -sign);
     xiDesired_ = trajectoryPlanner->getXiTrajectory();
     zmpd_ = trajectoryPlanner->getZMP();
+
     anklePlanner->updateFoot(ankle_rf, -sign);
     anklePlanner->generateTrajectory();
+
     onlineWalk_->setDt(dt);
     onlineWalk_->setBaseHeight(COM_height);
     onlineWalk_->setBaseIdle(shank_ + thigh_);
@@ -738,58 +745,162 @@ bool Robot::trajGen(int step_count, double t_step, double alpha, double t_double
 
     vector<Vector3d> com_pos = trajectoryPlanner->getCoM();
     CoMPos_.insert(CoMPos_.end(), com_pos.begin(), com_pos.end());
+
     vector<Vector3d> lank = anklePlanner->getTrajectoryL();
     lAnklePos_.insert(lAnklePos_.end(), lank.begin(), lank.end());
+
     vector<Vector3d> rank = anklePlanner->getTrajectoryR();
     rAnklePos_.insert(rAnklePos_.end(), rank.begin(), rank.end());
 
     vector<Matrix3d> com_rot = trajectoryPlanner->yawRotGen();
     CoMRot_.insert(CoMRot_.end(), com_rot.begin(), com_rot.end());
+
     vector<Matrix3d> lank_rot = anklePlanner->getRotTrajectoryL();
     lAnkleRot_.insert(lAnkleRot_.end(), lank_rot.begin(), lank_rot.end());
+
     vector<Matrix3d> rank_rot = anklePlanner->getRotTrajectoryR();
     rAnkleRot_.insert(rAnkleRot_.end(), rank_rot.begin(), rank_rot.end());
 
     vector<int> robot_state = anklePlanner->getRobotState();
-    robotPhase_.insert(robotPhase_.end(), robot_state.begin(), robot_state.end()); 
+    robotPhase_.insert(robotPhase_.end(), robot_state.begin(), robot_state.end());
+
     CoMDot_ = trajectoryPlanner->get_CoMDot();
 
     dataSize_ += trajectory_size;
-    
+
     trajSizes_.push_back(dataSize_);
     robotControlState_.push_back(WALK);
     isTrajAvailable_ = true;
-
 
     std::ofstream traj_file;
     traj_file.open("/home/mozayyan/gait_traj_debug.csv");
 
     std::cout << "[debug] writing csv..." << std::endl;
 
-    traj_file << "i,com_x,com_y,com_z,lx,ly,lz,rx,ry,rz,zmp_x,zmp_y,zmp_z,phase\n";
+    auto yawFromRot = [](const Matrix3d& R) -> double {
+        return std::atan2(R(1, 0), R(0, 0));
+    };
+
+    auto footPolygon = [&](const Vector3d& foot_pos, const Matrix3d& foot_rot)
+    {
+        std::vector<Vector2d> poly;
+
+        double yaw = yawFromRot(foot_rot);
+        Matrix2d R;
+        R << std::cos(yaw), -std::sin(yaw),
+             std::sin(yaw),  std::cos(yaw);
+
+        std::vector<Vector2d> local = {
+            Vector2d( soleXFront_, -soleY_),
+            Vector2d( soleXFront_,  soleY_),
+            Vector2d(-soleXBack_,   soleY_),
+            Vector2d(-soleXBack_,  -soleY_)
+        };
+
+        Vector2d p0(foot_pos(0), foot_pos(1));
+
+        for (auto& p : local)
+            poly.push_back(p0 + R * p);
+
+        return poly;
+    };
+
+    auto cross2d = [](const Vector2d& O, const Vector2d& A, const Vector2d& B) {
+        return (A.x() - O.x()) * (B.y() - O.y()) -
+               (A.y() - O.y()) * (B.x() - O.x());
+    };
+
+    auto convexHull = [&](std::vector<Vector2d> pts)
+    {
+        std::sort(pts.begin(), pts.end(), [](const Vector2d& a, const Vector2d& b) {
+            if (a.x() == b.x()) return a.y() < b.y();
+            return a.x() < b.x();
+        });
+
+        std::vector<Vector2d> H;
+
+        for (auto& p : pts) {
+            while (H.size() >= 2 &&
+                   cross2d(H[H.size() - 2], H[H.size() - 1], p) <= 0)
+                H.pop_back();
+            H.push_back(p);
+        }
+
+        size_t lower_size = H.size();
+
+        for (int i = int(pts.size()) - 2; i >= 0; --i) {
+            Vector2d p = pts[i];
+            while (H.size() > lower_size &&
+                   cross2d(H[H.size() - 2], H[H.size() - 1], p) <= 0)
+                H.pop_back();
+            H.push_back(p);
+        }
+
+        if (!H.empty())
+            H.pop_back();
+
+        return H;
+    };
+
+
+    traj_file << "i,com_x,com_y,com_z,"
+              << "lx,ly,lz,l_yaw,"
+              << "rx,ry,rz,r_yaw,"
+              << "zmp_x,zmp_y,zmp_z,"
+              << "dcm_x,dcm_y,dcm_z,"
+              << "phase,"
+              << "poly_x0,poly_y0,poly_x1,poly_y1,poly_x2,poly_y2,poly_x3,poly_y3,"
+              << "poly_x4,poly_y4,poly_x5,poly_y5,poly_x6,poly_y6,poly_x7,poly_y7,"
 
     for (size_t i = 0; i < CoMPos_.size(); i++)
     {
+        Vector3d zmp = Vector3d::Zero();
+        if (i < zmpd_.size())
+            zmp = zmpd_[i];
+
+        Vector3d dcm = Vector3d::Zero();
+        if (i < xiDesired_.size())
+            dcm = xiDesired_[i];
+
+        double l_yaw = yawFromRot(lAnkleRot_[i]);
+        double r_yaw = yawFromRot(rAnkleRot_[i]);
+
+        std::vector<Vector2d> support_poly;
+
+        if (robotPhase_[i] == 2) {
+            support_poly = footPolygon(rAnklePos_[i], rAnkleRot_[i]);
+        }
+        else if (robotPhase_[i] == 3) {
+            support_poly = footPolygon(lAnklePos_[i], lAnkleRot_[i]);
+        }
+        else {
+            auto lp = footPolygon(lAnklePos_[i], lAnkleRot_[i]);
+            auto rp = footPolygon(rAnklePos_[i], rAnkleRot_[i]);
+
+            support_poly.insert(support_poly.end(), lp.begin(), lp.end());
+            support_poly.insert(support_poly.end(), rp.begin(), rp.end());
+
+            support_poly = convexHull(support_poly);
+        }
+
         traj_file
             << i << ","
-            << CoMPos_[i](0) << ","
-            << CoMPos_[i](1) << ","
-            << CoMPos_[i](2) << ","
+            << CoMPos_[i](0) << "," << CoMPos_[i](1) << "," << CoMPos_[i](2) << ","
+            << lAnklePos_[i](0) << "," << lAnklePos_[i](1) << "," << lAnklePos_[i](2) << "," << l_yaw << ","
+            << rAnklePos_[i](0) << "," << rAnklePos_[i](1) << "," << rAnklePos_[i](2) << "," << r_yaw << ","
+            << zmp(0) << "," << zmp(1) << "," << zmp(2) << ","
+            << dcm(0) << "," << dcm(1) << "," << dcm(2) << ","
+            << robotPhase_[i] << ",";
 
-            << lAnklePos_[i](0) << ","
-            << lAnklePos_[i](1) << ","
-            << lAnklePos_[i](2) << ","
+        for (int k = 0; k < 8; k++)
+        {
+            if (k < support_poly.size())
+                traj_file << support_poly[k].x() << "," << support_poly[k].y() << ",";
+            else
+                traj_file << "nan,nan,";
+        }
 
-            << rAnklePos_[i](0) << ","
-            << rAnklePos_[i](1) << ","
-            << rAnklePos_[i](2) << ","
-
-            << zmpd_[i](0) << ","
-            << zmpd_[i](1) << ","
-            << zmpd_[i](2) << ","
-
-            << robotPhase_[i]
-            << "\n";
+        traj_file << "\n";
     }
 
     traj_file.close();

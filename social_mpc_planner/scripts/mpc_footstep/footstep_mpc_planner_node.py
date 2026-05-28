@@ -114,7 +114,7 @@ class FootstepMPCPlanner:
             self.predicted_people_callback
         )
 
-        self.execution_steps = 8
+        self.execution_steps = 12
         self.use_receding_horizon = True
 
         self.goal_tolerance = 0.15
