@@ -850,7 +850,7 @@ bool Robot::trajGen(int step_count, double t_step, double alpha, double t_double
               << "dcm_x,dcm_y,dcm_z,"
               << "phase,"
               << "poly_x0,poly_y0,poly_x1,poly_y1,poly_x2,poly_y2,poly_x3,poly_y3,"
-              << "poly_x4,poly_y4,poly_x5,poly_y5,poly_x6,poly_y6,poly_x7,poly_y7,"
+              << "poly_x4,poly_y4,poly_x5,poly_y5,poly_x6,poly_y6,poly_x7,poly_y7,";
 
     for (size_t i = 0; i < CoMPos_.size(); i++)
     {

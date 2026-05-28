@@ -29,6 +29,7 @@ class FootstepMPCPlanner:
         self.gy = 0.0
         self.goal_received = False
 
+        # Initial value; it is updated adaptively before each MPC solve.
         self.N = 20
 
         self.step_width = 0.11
@@ -114,7 +115,23 @@ class FootstepMPCPlanner:
             self.predicted_people_callback
         )
 
-        self.execution_steps = 12
+        # Adaptive MPC horizon parameters
+        # N is the prediction / optimization horizon and is updated at every replanning cycle.
+        self.min_prediction_steps = 4
+        self.max_prediction_steps = 20
+        self.nominal_step_length = 0.15
+        self.prediction_margin_steps = 3
+        self.N = self.max_prediction_steps
+
+        # Execution horizon parameters
+        # The robot will execute only a short batch from the optimized horizon.
+        # This value counts the commanded footsteps written to the gait planner,
+        # including the optional final support footstep added in make_execution_batch().
+        self.preferred_execution_steps = 4
+        self.max_execution_steps = 6
+        self.min_execution_steps = 2
+        self.execution_steps = self.preferred_execution_steps
+
         self.use_receding_horizon = True
 
         self.goal_tolerance = 0.15
@@ -142,17 +159,8 @@ class FootstepMPCPlanner:
 
         rospy.loginfo("New footstep goal: x=%.2f y=%.2f", self.gx, self.gy)
 
-        dxx = self.gx - self.x
-        dyy = self.gy - self.y
-        dist = math.sqrt(dxx*dxx + dyy*dyy)
-
-        nominal_step = 0.15
-        N = int(math.ceil(dist / nominal_step))
-
-        N = max(4, min(N, 20))  
-        self.N = N
-
-
+        # Do not fix N here. The prediction horizon must be recomputed
+        # from the current odometry at every replanning cycle.
         if self.odom_received:
             self.plan_footsteps()
 
@@ -160,6 +168,40 @@ class FootstepMPCPlanner:
         dx = self.gx - self.x
         dy = self.gy - self.y
         return math.sqrt(dx * dx + dy * dy)
+
+    def update_adaptive_horizon(self):
+        """
+        Update the MPC prediction horizon and the execution batch size.
+
+        self.N is adaptive and can become long for distant goals.
+        self.execution_steps is deliberately short and capped, so the robot
+        never commits to too many footsteps before the next replanning cycle.
+        """
+        dist = self.distance_to_goal()
+
+        # Prediction horizon: adaptive with distance.
+        N = int(math.ceil(dist / self.nominal_step_length)) + self.prediction_margin_steps
+        self.N = max(self.min_prediction_steps, min(N, self.max_prediction_steps))
+
+        # Execution horizon: short, bounded, and independent from N.
+        # For very close goals, execute only two commanded footsteps.
+        # Otherwise use the preferred value, but never exceed max_execution_steps.
+        if dist < 0.40:
+            exec_steps = self.min_execution_steps
+        else:
+            exec_steps = self.preferred_execution_steps
+
+        self.execution_steps = max(
+            self.min_execution_steps,
+            min(exec_steps, self.max_execution_steps, self.N)
+        )
+
+        rospy.loginfo(
+            "Adaptive horizons | dist=%.3f m | N=%d | execution_steps=%d",
+            dist,
+            self.N,
+            self.execution_steps
+        )
 
     def normalize_angle_expr(self, angle):
         return ca.atan2(ca.sin(angle), ca.cos(angle))
@@ -220,7 +262,8 @@ class FootstepMPCPlanner:
 
         if not self.active_goal:
             return
-        
+
+        self.update_adaptive_horizon()
         N = self.N
         x_start = self.x
         y_start = self.y
@@ -719,41 +762,72 @@ class FootstepMPCPlanner:
         )
 
     def make_execution_batch(self, footsteps):
+        """
+        Select only a short execution batch from the optimized footsteps.
 
+        Important:
+        - self.N is the prediction horizon.
+        - self.execution_steps is the maximum number of commanded footsteps
+          sent to the gait planner for this batch.
+        - If a final support footstep is added, it is counted inside
+          self.execution_steps. Therefore, the robot will not execute more
+          than self.execution_steps footsteps from this batch.
+        """
         if len(footsteps) == 0:
             return []
 
-        K = min(self.execution_steps, len(footsteps))
+        max_commanded_steps = min(
+            self.execution_steps,
+            self.max_execution_steps,
+            len(footsteps) + 1  # +1 because we may add final support
+        )
+
+        # Near the goal, do not force an extra support step if it would create
+        # unnecessary motion. Otherwise reserve one slot for final support.
+        add_final_support = self.distance_to_goal() > self.goal_tolerance
+
+        if add_final_support and max_commanded_steps >= 2:
+            K = min(max_commanded_steps - 1, len(footsteps))
+        else:
+            K = min(max_commanded_steps, len(footsteps))
+
+        K = max(1, K)
         batch = footsteps[:K]
+
+        if not add_final_support:
+            rospy.loginfo(
+                "Execution batch selected: %d footsteps, no final support step.",
+                len(batch)
+            )
+            return batch
 
         last = batch[-1]
         last_theta = last["theta"]
-        last_is_left = (last["foot"] == "L")
-
-        other_is_left = not last_is_left
-        lateral_other = self.step_width_config if other_is_left else -self.step_width_config
-
         final_cross_width = self.min_cross_width
 
         if last["foot"] == "L":
-            # place right foot to the right of the last left foot
+            # Place right foot to the right of the last left foot.
             final_x = last["x"] + final_cross_width * math.sin(last_theta)
             final_y = last["y"] - final_cross_width * math.cos(last_theta)
             final_foot = "R"
         else:
-            # place left foot to the left of the last right foot
+            # Place left foot to the left of the last right foot.
             final_x = last["x"] - final_cross_width * math.sin(last_theta)
             final_y = last["y"] + final_cross_width * math.cos(last_theta)
             final_foot = "L"
 
-        final_step = {
+        batch.append({
             "x": final_x,
             "y": final_y,
             "theta": last_theta,
             "foot": final_foot
-        }
+        })
 
-        batch.append(final_step)
+        rospy.loginfo(
+            "Execution batch selected: %d commanded footsteps out of N=%d.",
+            len(batch),
+            self.N
+        )
 
         return batch
 
