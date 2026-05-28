@@ -739,6 +739,42 @@ bool Robot::trajGen(int step_count, double t_step, double alpha, double t_double
     robotControlState_.push_back(WALK);
     isTrajAvailable_ = true;
 
+
+    std::ofstream traj_file;
+    traj_file.open("/home/mozayyan/gait_traj_debug.csv");
+
+    std::cout << "[debug] writing csv..." << std::endl;
+
+    traj_file << "i,com_x,com_y,com_z,lx,ly,lz,rx,ry,rz,zmp_x,zmp_y,zmp_z,phase\n";
+
+    for (size_t i = 0; i < CoMPos_.size(); i++)
+    {
+        traj_file
+            << i << ","
+            << CoMPos_[i](0) << ","
+            << CoMPos_[i](1) << ","
+            << CoMPos_[i](2) << ","
+
+            << lAnklePos_[i](0) << ","
+            << lAnklePos_[i](1) << ","
+            << lAnklePos_[i](2) << ","
+
+            << rAnklePos_[i](0) << ","
+            << rAnklePos_[i](1) << ","
+            << rAnklePos_[i](2) << ","
+
+            << zmpd_[i](0) << ","
+            << zmpd_[i](1) << ","
+            << zmpd_[i](2) << ","
+
+            << robotPhase_[i]
+            << "\n";
+    }
+
+    traj_file.close();
+
+    std::cout << "[debug] csv written!" << std::endl;
+
     return true;
 }
 
@@ -1104,7 +1140,7 @@ bool Robot::getJointAngs(int iter, double config[12], double jnt_vel[12], double
             currentZMPPos_ = zmpd_[zmp_iter];
         }
 
-        cout << currentCommandedCoMPos_(0) << ", " << currentCommandedCoMPos_(1) << ", " << currentCommandedCoMPos_(2) << ", ";
+        //cout << currentCommandedCoMPos_(0) << ", " << currentCommandedCoMPos_(1) << ", " << currentCommandedCoMPos_(2) << ", ";
         // cout << " legs" << ", " << currentCommandedLeftAnklePos_(0) << ", " << currentCommandedRightAnklePos_(0) << ", ";
         // cout << currentCommandedRightAnklePos_(0) << ", " << currentCommandedRightAnklePos_(1) << ", " << currentCommandedRightAnklePos_(2) << endl;  
 

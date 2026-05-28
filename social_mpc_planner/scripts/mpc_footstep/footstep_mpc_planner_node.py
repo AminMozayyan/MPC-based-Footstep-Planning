@@ -114,7 +114,7 @@ class FootstepMPCPlanner:
             self.predicted_people_callback
         )
 
-        self.execution_steps = 6
+        self.execution_steps = 2
         self.use_receding_horizon = True
 
         self.goal_tolerance = 0.15
@@ -498,13 +498,13 @@ class FootstepMPCPlanner:
             self.print_footsteps(exec_footsteps)
             self.publish_markers(world_footsteps)
 
-            # self.write_walk_config(exec_footsteps)
-            # success = self.call_walk_service()
+            self.write_walk_config(exec_footsteps)
+            success = self.call_walk_service()
 
-            # if not success:
-            #     return
+            if not success:
+                return
 
-            rospy.sleep(6.5)  # allow odom to update
+            rospy.sleep(1)  # allow odom to update
 
             dist = self.distance_to_goal()
             rospy.loginfo("Distance to goal after batch: %.3f", dist)
