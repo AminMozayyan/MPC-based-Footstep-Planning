@@ -5,9 +5,6 @@
 #include <math.h>
 #include <vector>
 #include <string>
-#include <thread>
-#include <atomic>
-#include <mutex>
 
 #include <ros/ros.h>
 #include <ros/package.h>
@@ -45,10 +42,6 @@ public:
     const double* getGaitGazeboCommands() const; 
 
     // Lower Body
-    std::atomic<bool> is_walking_{false};
-    std::atomic<int> gait_iter_{0};
-    std::mutex gait_mutex_;
-    void gaitExecutionLoop();
     void sendGaitMotorCommands();
     bool setPos(int jointID, int dest);
     bool home(std_srvs::Empty::Request &req, std_srvs::Empty::Response &res);

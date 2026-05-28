@@ -62,7 +62,6 @@ public:
      */
     void setFoot(const vector<Vector3d>& rF, int sign);
     void setOnlineFoot(const vector<Vector3d>& rF, int sign);
-    void setCoMInit(const Eigen::Vector3d& com_init);
     
     /**
      * @brief Returns the trajectory of the divergent component of motion (Xi) in 3D.
