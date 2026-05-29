@@ -1,0 +1,24 @@
+
+source devel/setup.bash
+rostopic pub -1 /move_base_simple/goal geometry_msgs/PoseStamped "
+ header:
+   frame_id: 'odom'
+ pose:
+   position:
+     x: -0.5
+     y: -2.5
+     z: 0.0
+   orientation:
+     w: 1.0
+ "
+
+
+
+roslaunch surenaV_gazebo mpc_world_footstep.launch   experiment_name:=no_obstacle_straight_01   eval_output_root:=$HOME/Surena_experiments
+
+RUN_DIR=$(ls -td $HOME/Surena_experiments/no_obstacle_straight_01_* | head -1)
+
+python3 ~/Surena_ws/src/surenaV_core/social_mpc_planner/scripts/mpc_footstep/compute_navigation_metrics.py   --run-dir "$RUN_DIR"
+
+python3 ~/Surena_ws/src/social_mpc_planner/scripts/evaluate_all_experiments.py \
+  $HOME/Surena_experiments

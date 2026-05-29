@@ -14,6 +14,7 @@ from geometry_msgs.msg import Point
 from social_mpc_planner.msg import CircularObstacleArray
 from social_mpc_planner.msg import PredictedPeople
 from gait_planner.srv import Trajectory, TrajectoryRequest
+from std_msgs.msg import Float32, Int32, Bool, String
 
 
 class FootstepMPCPlanner:
@@ -73,6 +74,17 @@ class FootstepMPCPlanner:
         self.goal_sub = rospy.Subscriber("/move_base_simple/goal", PoseStamped, self.goal_callback)
 
         self.marker_pub = rospy.Publisher("/footstep_markers", MarkerArray, queue_size=10)
+
+        # Experiment/evaluation topics. These are intentionally simple std_msgs
+        # so the logger can be used without defining new custom messages.
+        self.mpc_solve_time_pub = rospy.Publisher("/evaluation/mpc_solve_time", Float32, queue_size=10)
+        self.replan_cycle_time_pub = rospy.Publisher("/evaluation/replan_cycle_time", Float32, queue_size=10)
+        self.executed_footsteps_pub = rospy.Publisher("/evaluation/executed_footsteps_count", Int32, queue_size=10)
+        self.generated_footsteps_pub = rospy.Publisher("/evaluation/generated_footsteps_count", Int32, queue_size=10)
+        self.prediction_horizon_pub = rospy.Publisher("/evaluation/prediction_horizon", Int32, queue_size=10)
+        self.execution_horizon_pub = rospy.Publisher("/evaluation/execution_horizon", Int32, queue_size=10)
+        self.goal_reached_pub = rospy.Publisher("/evaluation/goal_reached", Bool, queue_size=10)
+        self.planner_status_pub = rospy.Publisher("/evaluation/planner_status", String, queue_size=10)
 
         rospy.loginfo("footstep_mpc_planner_node started.")
 
@@ -158,6 +170,8 @@ class FootstepMPCPlanner:
         self.replan_count = 0
 
         rospy.loginfo("New footstep goal: x=%.2f y=%.2f", self.gx, self.gy)
+        self.goal_reached_pub.publish(Bool(False))
+        self.planner_status_pub.publish(String("new_goal"))
 
         # Do not fix N here. The prediction horizon must be recomputed
         # from the current odometry at every replanning cycle.
@@ -263,7 +277,13 @@ class FootstepMPCPlanner:
         if not self.active_goal:
             return
 
+        replan_cycle_start_time = rospy.Time.now()
+
         self.update_adaptive_horizon()
+        self.prediction_horizon_pub.publish(Int32(self.N))
+        self.execution_horizon_pub.publish(Int32(self.execution_steps))
+        self.planner_status_pub.publish(String("planning"))
+
         N = self.N
         x_start = self.x
         y_start = self.y
@@ -469,7 +489,9 @@ class FootstepMPCPlanner:
         try:
             t0 = rospy.Time.now()
             sol = opti.solve()
-            rospy.loginfo("MPC solve time: %.3f", (rospy.Time.now() - t0).to_sec())
+            solve_time = (rospy.Time.now() - t0).to_sec()
+            rospy.loginfo("MPC solve time: %.3f", solve_time)
+            self.mpc_solve_time_pub.publish(Float32(solve_time))
 
             footsteps = []
 
@@ -487,6 +509,8 @@ class FootstepMPCPlanner:
                     "foot": "L" if is_left else "R"
                 })
 
+
+            self.generated_footsteps_pub.publish(Int32(len(footsteps)))
 
             # 1) add final double support in LOCAL frame
             # if len(footsteps) >= 1:
@@ -541,6 +565,11 @@ class FootstepMPCPlanner:
             self.print_footsteps(exec_footsteps)
             self.publish_markers(world_footsteps)
 
+            self.executed_footsteps_pub.publish(Int32(len(exec_footsteps)))
+            replan_cycle_time = (rospy.Time.now() - replan_cycle_start_time).to_sec()
+            self.replan_cycle_time_pub.publish(Float32(replan_cycle_time))
+            self.planner_status_pub.publish(String("commanding_walk"))
+
             self.write_walk_config(exec_footsteps)
             success = self.call_walk_service()
 
@@ -555,6 +584,8 @@ class FootstepMPCPlanner:
             if dist <= self.goal_tolerance:
                 rospy.loginfo("Goal reached. Stopping receding horizon.")
                 self.active_goal = False
+                self.goal_reached_pub.publish(Bool(True))
+                self.planner_status_pub.publish(String("goal_reached"))
                 return
 
             self.replan_count += 1
@@ -562,6 +593,7 @@ class FootstepMPCPlanner:
             if self.replan_count >= self.max_replan_cycles:
                 rospy.logwarn("Max replan cycles reached. Stopping.")
                 self.active_goal = False
+                self.planner_status_pub.publish(String("max_replan_cycles_reached"))
                 return
 
             if self.active_goal and not rospy.is_shutdown():
@@ -570,6 +602,7 @@ class FootstepMPCPlanner:
 
         except RuntimeError as e:
             rospy.logwarn("Footstep MPC failed: %s", str(e))
+            self.planner_status_pub.publish(String("mpc_failed"))
 
     def print_footsteps(self, footsteps):
         rospy.loginfo("Generated footsteps:")
@@ -845,6 +878,7 @@ class FootstepMPCPlanner:
             if not res.result:
                 rospy.logwarn("Walk service returned false.")
                 self.active_goal = False
+                self.planner_status_pub.publish(String("walk_service_returned_false"))
                 return False
 
             return True
@@ -852,6 +886,7 @@ class FootstepMPCPlanner:
         except Exception as e:
             rospy.logwarn("Walk service failed: %s", str(e))
             self.active_goal = False
+            self.planner_status_pub.publish(String("walk_service_failed"))
             return False
 
         finally:

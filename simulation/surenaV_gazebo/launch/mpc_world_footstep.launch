@@ -10,6 +10,17 @@
   <arg name="headless" default="false"/>
   <arg name="debug" default="false"/>
 
+  <arg name="eval_output_root" default="$(env HOME)/navigation_eval_results"/>
+  <arg name="experiment_name" default="exp01"/>
+  <arg name="robot_radius" default="0.25"/>
+  <arg name="collision_margin" default="0.02"/>
+  <arg name="goal_tolerance" default="0.1"/>
+  <arg name="max_navigation_time" default="300.0"/>
+  <arg name="eval_log_rate_hz" default="10.0"/>
+
+  <arg name="enable_eval_logging" default="true"/>
+
+
   <!-- LAUNCH GAZEBO  -->
   <include file="$(find gazebo_ros)/launch/empty_world.launch">
     <arg name="world_name" value="$(find surenaV_gazebo)/worlds/surenaV.world"/>
@@ -28,7 +39,9 @@
   <node name="urdf_spawner" pkg="gazebo_ros" type="spawn_model" respawn="false" output="screen"
     args="-urdf -model surenaV -param robot_description"/>
 
-  <!-- Static obstacles -->
+
+  
+<!-- 
   <node name="spawn_obstacle_1" pkg="gazebo_ros" type="spawn_model"
         args="-file $(find social_mpc_planner)/models/cylinder_obstacle/model.sdf -sdf -model obstacle_1 -x -2.5 -y -2.5 -z 0.5"/>
 
@@ -53,9 +66,12 @@
   <node name="spawn_obstacle_9" pkg="gazebo_ros" type="spawn_model"
         args="-file $(find social_mpc_planner)/models/cylinder_obstacle/model.sdf -sdf -model obstacle_9 -x 2.5 -y 2.5 -z 0.5"/>
 
-  <!-- Human model -->
+
   <node name="spawn_person_1" pkg="gazebo_ros" type="spawn_model"
-        args="-file $(find surenaV_gazebo)/models/human_actor/model.sdf -sdf -model person_1 -x 1.0 -y -2.5 -z -0.5"/>
+        args="-file $(find surenaV_gazebo)/models/human_actor/model.sdf -sdf -model person_1 -x 1.0 -y -2.5 -z -0.5"/> -->
+
+
+
   
   <!-- Static obstacle extractor + marker publisher -->
   <node name="gazebo_static_obstacle_node"
@@ -91,6 +107,12 @@
     <param name="prediction_horizon" value="150"/>
   </node>
 
+  <!-- Robot Manager -->
+  <node name="robot_manager_node"
+        pkg="robot_manager"
+        type="robot_manager_node"
+        output="screen"/>
+
   <!-- MPC planner -->
   <node name="mpc_planner_node"
         pkg="social_mpc_planner"
@@ -103,6 +125,21 @@
       name="gazebo_odom_publisher"
       output="screen">
   <param name="robot_name" value="surenaV"/>
+  </node>
+
+  <!-- Navigation evaluation logger -->
+  <node name="navigation_experiment_logger_node"
+        pkg="social_mpc_planner"
+        type="experiment_logger_node.py"
+        output="screen"
+        if="$(arg enable_eval_logging)">
+    <param name="output_root" value="$(arg eval_output_root)"/>
+    <param name="experiment_name" value="$(arg experiment_name)"/>
+    <param name="robot_radius" value="$(arg robot_radius)"/>
+    <param name="collision_margin" value="$(arg collision_margin)"/>
+    <param name="goal_tolerance" value="$(arg goal_tolerance)"/>
+    <param name="max_navigation_time" value="$(arg max_navigation_time)"/>
+    <param name="log_rate_hz" value="$(arg eval_log_rate_hz)"/>
   </node>
 
   <!-- Map publisher -->
