@@ -28,6 +28,7 @@ class FootstepMPCPlanner:
 
         self.gx = 0.0
         self.gy = 0.0
+        self.gtheta = 0.0
         self.goal_received = False
 
         # Initial value; it is updated adaptively before each MPC solve.
@@ -41,12 +42,15 @@ class FootstepMPCPlanner:
         self.max_cross_width = 0.25
         self.nominal_cross_width = 2.0 * self.step_width
 
-        self.min_step_x = 0.03
+        self.min_step_x = -0.15
         self.max_step_x = 0.2
 
         self.max_yaw_step = 0.08
 
         self.Q_goal = 80.0
+        # Soft terminal weight for the desired final heading.
+        # It is intentionally smaller than Q_goal so position tracking remains dominant.
+        self.Q_goal_yaw = 80.0
         self.Q_progress = 3.0
         self.Q_nominal = 30.0
         self.Q_yaw = 0.2
@@ -140,14 +144,15 @@ class FootstepMPCPlanner:
         # This value counts the commanded footsteps written to the gait planner,
         # including the optional final support footstep added in make_execution_batch().
         self.preferred_execution_steps = 4
-        self.max_execution_steps = 6
-        self.min_execution_steps = 2
+        self.max_execution_steps = 8
+        self.min_execution_steps = 4
         self.execution_steps = self.preferred_execution_steps
 
         self.use_receding_horizon = True
 
-        self.goal_tolerance = 0.15
-        self.max_replan_cycles = 20
+        self.goal_tolerance = 0.1
+        self.goal_yaw_tolerance = math.radians(10.0)
+        self.max_replan_cycles = 30
         self.replan_count = 0
         self.is_walking = False
         self.active_goal = False
@@ -165,11 +170,19 @@ class FootstepMPCPlanner:
     def goal_callback(self, msg):
         self.gx = msg.pose.position.x
         self.gy = msg.pose.position.y
+
+        q = msg.pose.orientation
+        quat = [q.x, q.y, q.z, q.w]
+        _, _, self.gtheta = euler_from_quaternion(quat)
+
         self.goal_received = True
         self.active_goal = True
         self.replan_count = 0
 
-        rospy.loginfo("New footstep goal: x=%.2f y=%.2f", self.gx, self.gy)
+        rospy.loginfo(
+            "New footstep goal: x=%.2f y=%.2f theta=%.2f",
+            self.gx, self.gy, self.gtheta
+        )
         self.goal_reached_pub.publish(Bool(False))
         self.planner_status_pub.publish(String("new_goal"))
 
@@ -182,6 +195,15 @@ class FootstepMPCPlanner:
         dx = self.gx - self.x
         dy = self.gy - self.y
         return math.sqrt(dx * dx + dy * dy)
+
+    def heading_error_to_goal(self):
+        return abs(self.wrap_angle(self.theta - self.gtheta))
+
+    def goal_pose_reached(self):
+        return (
+            self.distance_to_goal() <= self.goal_tolerance and
+            self.heading_error_to_goal() <= self.goal_yaw_tolerance
+        )
 
     def update_adaptive_horizon(self):
         """
@@ -279,6 +301,19 @@ class FootstepMPCPlanner:
 
         replan_cycle_start_time = rospy.Time.now()
 
+        if self.goal_pose_reached():
+            pos_err = self.distance_to_goal()
+            yaw_err = self.heading_error_to_goal()
+            rospy.loginfo(
+                "Goal pose reached before planning. pos_err=%.3f m yaw_err=%.2f deg",
+                pos_err,
+                math.degrees(yaw_err)
+            )
+            self.active_goal = False
+            self.goal_reached_pub.publish(Bool(True))
+            self.planner_status_pub.publish(String("goal_pose_reached"))
+            return
+
         self.update_adaptive_horizon()
         self.prediction_horizon_pub.publish(Int32(self.N))
         self.execution_horizon_pub.publish(Int32(self.execution_steps))
@@ -293,6 +328,10 @@ class FootstepMPCPlanner:
             self.gx, self.gy,
             x_start, y_start, th_start
         )
+
+        # Desired final heading expressed in the local MPC frame.
+        # This is the actual goal orientation from PoseStamped, not only the direction to the goal point.
+        goal_theta_final_l = self.wrap_angle(self.gtheta - th_start)
 
         local_obstacles = []
 
@@ -349,7 +388,9 @@ class FootstepMPCPlanner:
         prev_y = 0.0
         prev_th = 0.0
 
-        goal_theta = math.atan2(gy_l, gx_l)
+        # Heading of the line from the current robot pose to the goal position.
+        # This is used as a weak intermediate reference so the robot generally faces the path.
+        goal_theta_path = math.atan2(gy_l, gx_l)
 
         for k in range(N):
             xk = X[k]
@@ -440,7 +481,7 @@ class FootstepMPCPlanner:
 
             cost += self.Q_progress * dist_goal_sq
             cost += self.Q_nominal * (dy_body - desired_y) ** 2
-            cost += self.Q_yaw * self.normalize_angle_expr(thk - goal_theta) ** 2
+            cost += self.Q_yaw * self.normalize_angle_expr(thk - goal_theta_path) ** 2
 
             if k > 0:
                 dstep_x = X[k] - X[k - 1]
@@ -454,8 +495,13 @@ class FootstepMPCPlanner:
             prev_y = yk
             prev_th = thk
 
-        terminal_cost = (X[N - 1] - gx_l) ** 2 + (Y[N - 1] - gy_l) ** 2
-        cost += self.Q_goal * terminal_cost
+        terminal_position_cost = (X[N - 1] - gx_l) ** 2 + (Y[N - 1] - gy_l) ** 2
+        terminal_yaw_error = self.normalize_angle_expr(TH[N - 1] - goal_theta_final_l)
+
+        # Soft terminal pose cost:
+        # Position remains dominant, while final yaw is encouraged without imposing a hard constraint.
+        cost += self.Q_goal * terminal_position_cost
+        cost += self.Q_goal_yaw * terminal_yaw_error ** 2
 
         opti.minimize(cost)
 
@@ -468,12 +514,15 @@ class FootstepMPCPlanner:
             x_ref = alpha * gx_l
             y_ref = alpha * gy_l
 
-            x_init = x_ref - lateral * math.sin(goal_theta)
-            y_init = y_ref + lateral * math.cos(goal_theta)
+            # Initialize the yaw smoothly from the path-facing direction toward the desired final heading.
+            yaw_init = self.wrap_angle((1.0 - alpha) * goal_theta_path + alpha * goal_theta_final_l)
+
+            x_init = x_ref - lateral * math.sin(yaw_init)
+            y_init = y_ref + lateral * math.cos(yaw_init)
 
             opti.set_initial(X[k], x_init)
             opti.set_initial(Y[k], y_init)
-            opti.set_initial(TH[k], goal_theta)
+            opti.set_initial(TH[k], yaw_init)
 
         opts = {
             "ipopt.print_level": 0,
@@ -579,13 +628,22 @@ class FootstepMPCPlanner:
             rospy.sleep(1)  # allow odom to update
 
             dist = self.distance_to_goal()
-            rospy.loginfo("Distance to goal after batch: %.3f", dist)
+            yaw_err = self.heading_error_to_goal()
+            rospy.loginfo(
+                "Goal pose error after batch: position=%.3f m yaw=%.2f deg",
+                dist,
+                math.degrees(yaw_err)
+            )
 
-            if dist <= self.goal_tolerance:
-                rospy.loginfo("Goal reached. Stopping receding horizon.")
+            if dist <= self.goal_tolerance and yaw_err <= self.goal_yaw_tolerance:
+                rospy.loginfo(
+                    "Goal pose reached. Stopping receding horizon. position=%.3f m yaw=%.2f deg",
+                    dist,
+                    math.degrees(yaw_err)
+                )
                 self.active_goal = False
                 self.goal_reached_pub.publish(Bool(True))
-                self.planner_status_pub.publish(String("goal_reached"))
+                self.planner_status_pub.publish(String("goal_pose_reached"))
                 return
 
             self.replan_count += 1
@@ -671,7 +729,11 @@ class FootstepMPCPlanner:
         goal_marker.pose.position.x = self.gx
         goal_marker.pose.position.y = self.gy
         goal_marker.pose.position.z = 0.08
-        goal_marker.pose.orientation.w = 1.0
+        q_goal = quaternion_from_euler(0.0, 0.0, self.gtheta)
+        goal_marker.pose.orientation.x = q_goal[0]
+        goal_marker.pose.orientation.y = q_goal[1]
+        goal_marker.pose.orientation.z = q_goal[2]
+        goal_marker.pose.orientation.w = q_goal[3]
         goal_marker.scale.x = 0.22
         goal_marker.scale.y = 0.22
         goal_marker.scale.z = 0.22
@@ -817,7 +879,7 @@ class FootstepMPCPlanner:
 
         # Near the goal, do not force an extra support step if it would create
         # unnecessary motion. Otherwise reserve one slot for final support.
-        add_final_support = self.distance_to_goal() > self.goal_tolerance
+        add_final_support = not self.goal_pose_reached()
 
         if add_final_support and max_commanded_steps >= 2:
             K = min(max_commanded_steps - 1, len(footsteps))

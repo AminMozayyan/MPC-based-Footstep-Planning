@@ -11,6 +11,9 @@
 #include "gait_planner/Trajectory.h"
 #include "gait_planner/GeneralTraj.h"
 #include <std_msgs/Float64MultiArray.h>
+#include <sys/stat.h>
+#include <sys/types.h>
+#include <unistd.h>
 
 
 #include "json.hpp"

@@ -5,8 +5,8 @@ rostopic pub -1 /move_base_simple/goal geometry_msgs/PoseStamped "
    frame_id: 'odom'
  pose:
    position:
-     x: -0.5
-     y: -2.5
+     x: 0.0
+     y: 3.0
      z: 0.0
    orientation:
      w: 1.0
@@ -20,5 +20,5 @@ RUN_DIR=$(ls -td $HOME/Surena_experiments/no_obstacle_straight_01_* | head -1)
 
 python3 ~/Surena_ws/src/surenaV_core/social_mpc_planner/scripts/mpc_footstep/compute_navigation_metrics.py   --run-dir "$RUN_DIR"
 
-python3 ~/Surena_ws/src/social_mpc_planner/scripts/evaluate_all_experiments.py \
-  $HOME/Surena_experiments
+python3 ~/Surena_ws/src/surenaV_core/social_mpc_planner/scripts/mpc_footstep/evaluate_all_experiments.py   $HOME/Surena_experiments
+

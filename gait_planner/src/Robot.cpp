@@ -772,142 +772,191 @@ bool Robot::trajGen(int step_count, double t_step, double alpha, double t_double
     robotControlState_.push_back(WALK);
     isTrajAvailable_ = true;
 
-    std::ofstream traj_file;
-    traj_file.open("/home/mozayyan/gait_traj_debug.csv");
+    static int gait_log_counter = 0;
+    gait_log_counter++;
 
-    std::cout << "[debug] writing csv..." << std::endl;
+    std::string base_dir = "/home/mozayyan/gait_logs";
 
-    auto yawFromRot = [](const Matrix3d& R) -> double {
-        return std::atan2(R(1, 0), R(0, 0));
-    };
-
-    auto footPolygon = [&](const Vector3d& foot_pos, const Matrix3d& foot_rot)
+    // Preferred: set this ROS parameter from the experiment logger / launch file.
+    // Example value: /home/mozayyan/Surena_experiments/no_obstacle_straight_01_.../gait
+    std::string param_dir;
+    if (ros::param::get("/evaluation/gait_log_dir", param_dir))
     {
-        std::vector<Vector2d> poly;
-
-        double yaw = yawFromRot(foot_rot);
-        Matrix2d R;
-        R << std::cos(yaw), -std::sin(yaw),
-             std::sin(yaw),  std::cos(yaw);
-
-        std::vector<Vector2d> local = {
-            Vector2d( soleXFront_, -soleY_),
-            Vector2d( soleXFront_,  soleY_),
-            Vector2d(-soleXBack_,   soleY_),
-            Vector2d(-soleXBack_,  -soleY_)
-        };
-
-        Vector2d p0(foot_pos(0), foot_pos(1));
-
-        for (auto& p : local)
-            poly.push_back(p0 + R * p);
-
-        return poly;
-    };
-
-    auto cross2d = [](const Vector2d& O, const Vector2d& A, const Vector2d& B) {
-        return (A.x() - O.x()) * (B.y() - O.y()) -
-               (A.y() - O.y()) * (B.x() - O.x());
-    };
-
-    auto convexHull = [&](std::vector<Vector2d> pts)
+        if (!param_dir.empty())
+            base_dir = param_dir;
+    }
+    else
     {
-        std::sort(pts.begin(), pts.end(), [](const Vector2d& a, const Vector2d& b) {
-            if (a.x() == b.x()) return a.y() < b.y();
-            return a.x() < b.x();
-        });
-
-        std::vector<Vector2d> H;
-
-        for (auto& p : pts) {
-            while (H.size() >= 2 &&
-                   cross2d(H[H.size() - 2], H[H.size() - 1], p) <= 0)
-                H.pop_back();
-            H.push_back(p);
-        }
-
-        size_t lower_size = H.size();
-
-        for (int i = int(pts.size()) - 2; i >= 0; --i) {
-            Vector2d p = pts[i];
-            while (H.size() > lower_size &&
-                   cross2d(H[H.size() - 2], H[H.size() - 1], p) <= 0)
-                H.pop_back();
-            H.push_back(p);
-        }
-
-        if (!H.empty())
-            H.pop_back();
-
-        return H;
-    };
-
-
-    traj_file << "i,com_x,com_y,com_z,"
-              << "lx,ly,lz,l_yaw,"
-              << "rx,ry,rz,r_yaw,"
-              << "zmp_x,zmp_y,zmp_z,"
-              << "dcm_x,dcm_y,dcm_z,"
-              << "phase,"
-              << "poly_x0,poly_y0,poly_x1,poly_y1,poly_x2,poly_y2,poly_x3,poly_y3,"
-              << "poly_x4,poly_y4,poly_x5,poly_y5,poly_x6,poly_y6,poly_x7,poly_y7,";
-
-    for (size_t i = 0; i < CoMPos_.size(); i++)
-    {
-        Vector3d zmp = Vector3d::Zero();
-        if (i < zmpd_.size())
-            zmp = zmpd_[i];
-
-        Vector3d dcm = Vector3d::Zero();
-        if (i < xiDesired_.size())
-            dcm = xiDesired_[i];
-
-        double l_yaw = yawFromRot(lAnkleRot_[i]);
-        double r_yaw = yawFromRot(rAnkleRot_[i]);
-
-        std::vector<Vector2d> support_poly;
-
-        if (robotPhase_[i] == 2) {
-            support_poly = footPolygon(rAnklePos_[i], rAnkleRot_[i]);
-        }
-        else if (robotPhase_[i] == 3) {
-            support_poly = footPolygon(lAnklePos_[i], lAnkleRot_[i]);
-        }
-        else {
-            auto lp = footPolygon(lAnklePos_[i], lAnkleRot_[i]);
-            auto rp = footPolygon(rAnklePos_[i], rAnkleRot_[i]);
-
-            support_poly.insert(support_poly.end(), lp.begin(), lp.end());
-            support_poly.insert(support_poly.end(), rp.begin(), rp.end());
-
-            support_poly = convexHull(support_poly);
-        }
-
-        traj_file
-            << i << ","
-            << CoMPos_[i](0) << "," << CoMPos_[i](1) << "," << CoMPos_[i](2) << ","
-            << lAnklePos_[i](0) << "," << lAnklePos_[i](1) << "," << lAnklePos_[i](2) << "," << l_yaw << ","
-            << rAnklePos_[i](0) << "," << rAnklePos_[i](1) << "," << rAnklePos_[i](2) << "," << r_yaw << ","
-            << zmp(0) << "," << zmp(1) << "," << zmp(2) << ","
-            << dcm(0) << "," << dcm(1) << "," << dcm(2) << ","
-            << robotPhase_[i] << ",";
-
-        for (int k = 0; k < 8; k++)
-        {
-            if (k < support_poly.size())
-                traj_file << support_poly[k].x() << "," << support_poly[k].y() << ",";
-            else
-                traj_file << "nan,nan,";
-        }
-
-        traj_file << "\n";
+        // Optional fallback through environment variable.
+        const char* env_dir = std::getenv("GAIT_LOG_DIR");
+        if (env_dir != nullptr && std::string(env_dir).size() > 0)
+            base_dir = std::string(env_dir);
     }
 
-    traj_file.close();
+    // Create directory if it does not exist.
+    mkdir(base_dir.c_str(), 0775);
 
-    std::cout << "[debug] csv written!" << std::endl;
+    std::ostringstream filename;
+    filename << base_dir
+             << "/replan_"
+             << std::setw(3) << std::setfill('0') << gait_log_counter
+             << "_gait_traj.csv";
 
-    return true;
+    std::ofstream traj_file(filename.str().c_str());
+
+    if (!traj_file.is_open())
+    {
+        std::cerr << "[gait_log] Could not open file: " << filename.str() << std::endl;
+    }
+    else
+    {
+        std::cout << "[gait_log] writing gait CSV: " << filename.str() << std::endl;
+
+        auto yawFromRot = [](const Matrix3d& R) -> double {
+            return std::atan2(R(1, 0), R(0, 0));
+        };
+
+        auto footPolygon = [&](const Vector3d& foot_pos, const Matrix3d& foot_rot)
+        {
+            std::vector<Vector2d> poly;
+
+            double yaw = yawFromRot(foot_rot);
+            Matrix2d R;
+            R << std::cos(yaw), -std::sin(yaw),
+                 std::sin(yaw),  std::cos(yaw);
+
+            std::vector<Vector2d> local = {
+                Vector2d( soleXFront_, -soleY_),
+                Vector2d( soleXFront_,  soleY_),
+                Vector2d(-soleXBack_,   soleY_),
+                Vector2d(-soleXBack_,  -soleY_)
+            };
+
+            Vector2d p0(foot_pos(0), foot_pos(1));
+
+            for (auto& p : local)
+                poly.push_back(p0 + R * p);
+
+            return poly;
+        };
+
+        auto cross2d = [](const Vector2d& O, const Vector2d& A, const Vector2d& B) {
+            return (A.x() - O.x()) * (B.y() - O.y()) -
+                   (A.y() - O.y()) * (B.x() - O.x());
+        };
+
+        auto convexHull = [&](std::vector<Vector2d> pts)
+        {
+            std::sort(pts.begin(), pts.end(), [](const Vector2d& a, const Vector2d& b) {
+                if (a.x() == b.x()) return a.y() < b.y();
+                return a.x() < b.x();
+            });
+
+            std::vector<Vector2d> H;
+
+            for (auto& p : pts) {
+                while (H.size() >= 2 &&
+                       cross2d(H[H.size() - 2], H[H.size() - 1], p) <= 0)
+                    H.pop_back();
+                H.push_back(p);
+            }
+
+            size_t lower_size = H.size();
+
+            for (int i = int(pts.size()) - 2; i >= 0; --i) {
+                Vector2d p = pts[i];
+                while (H.size() > lower_size &&
+                       cross2d(H[H.size() - 2], H[H.size() - 1], p) <= 0)
+                    H.pop_back();
+                H.push_back(p);
+            }
+
+            if (!H.empty())
+                H.pop_back();
+
+            return H;
+        };
+
+        traj_file << "i,com_x,com_y,com_z,"
+                  << "lx,ly,lz,l_yaw,"
+                  << "rx,ry,rz,r_yaw,"
+                  << "zmp_x,zmp_y,zmp_z,"
+                  << "dcm_x,dcm_y,dcm_z,"
+                  << "phase,"
+                  << "poly_x0,poly_y0,poly_x1,poly_y1,poly_x2,poly_y2,poly_x3,poly_y3,"
+                  << "poly_x4,poly_y4,poly_x5,poly_y5,poly_x6,poly_y6,poly_x7,poly_y7"
+                  << "\n";
+
+        // IMPORTANT:
+        // Use only the trajectory generated in the current trajGen call.
+        // Do not iterate over CoMPos_ because CoMPos_ is cumulative across previous calls.
+        const size_t n = std::min(
+            std::min(com_pos.size(), lank.size()),
+            std::min(rank.size(), robot_state.size())
+        );
+
+        for (size_t i = 0; i < n; i++)
+        {
+            Vector3d zmp = Vector3d::Zero();
+            if (i < zmpd_.size())
+                zmp = zmpd_[i];
+
+            Vector3d dcm = Vector3d::Zero();
+            if (i < xiDesired_.size())
+                dcm = xiDesired_[i];
+
+            double l_yaw = 0.0;
+            if (i < lank_rot.size())
+                l_yaw = yawFromRot(lank_rot[i]);
+
+            double r_yaw = 0.0;
+            if (i < rank_rot.size())
+                r_yaw = yawFromRot(rank_rot[i]);
+
+            std::vector<Vector2d> support_poly;
+
+            if (robot_state[i] == 2) {
+                support_poly = footPolygon(rank[i], rank_rot[i]);
+            }
+            else if (robot_state[i] == 3) {
+                support_poly = footPolygon(lank[i], lank_rot[i]);
+            }
+            else {
+                auto lp = footPolygon(lank[i], lank_rot[i]);
+                auto rp = footPolygon(rank[i], rank_rot[i]);
+
+                support_poly.insert(support_poly.end(), lp.begin(), lp.end());
+                support_poly.insert(support_poly.end(), rp.begin(), rp.end());
+
+                support_poly = convexHull(support_poly);
+            }
+
+            traj_file
+                << i << ","
+                << com_pos[i](0) << "," << com_pos[i](1) << "," << com_pos[i](2) << ","
+                << lank[i](0) << "," << lank[i](1) << "," << lank[i](2) << "," << l_yaw << ","
+                << rank[i](0) << "," << rank[i](1) << "," << rank[i](2) << "," << r_yaw << ","
+                << zmp(0) << "," << zmp(1) << "," << zmp(2) << ","
+                << dcm(0) << "," << dcm(1) << "," << dcm(2) << ","
+                << robot_state[i] << ",";
+
+            for (int k = 0; k < 8; k++)
+            {
+                if (k < static_cast<int>(support_poly.size()))
+                    traj_file << support_poly[k].x() << "," << support_poly[k].y();
+                else
+                    traj_file << "nan,nan";
+
+                if (k < 7)
+                    traj_file << ",";
+            }
+
+            traj_file << "\n";
+        }
+
+        traj_file.close();
+        std::cout << "[gait_log] csv written: " << filename.str() << std::endl;
+    }
 }
 
 void Robot::loadConfig(json& walk_config, int& step_count, vector<Vector3d>& ankle_rf, vector<Vector3d>& dcm_rf, vector<double>& theta_rf,

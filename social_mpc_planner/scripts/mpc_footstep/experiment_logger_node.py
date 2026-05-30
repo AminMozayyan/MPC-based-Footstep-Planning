@@ -47,7 +47,8 @@ class ExperimentLogger:
         self.robot_radius = float(rospy.get_param("~robot_radius", 0.25))
         self.default_human_radius = float(rospy.get_param("~default_human_radius", 0.20))
         self.collision_margin = float(rospy.get_param("~collision_margin", 0.0))
-        self.goal_tolerance = float(rospy.get_param("~goal_tolerance", 0.15))
+        self.goal_tolerance = float(rospy.get_param("~goal_tolerance", 0.10))
+        self.goal_yaw_tolerance = math.radians(float(rospy.get_param("~goal_yaw_tolerance_deg", 10.0)))
         self.max_navigation_time = float(rospy.get_param("~max_navigation_time", 120.0))
         self.log_rate_hz = float(rospy.get_param("~log_rate_hz", 20.0))
 
@@ -55,11 +56,20 @@ class ExperimentLogger:
         self.run_dir = os.path.join(self.output_root, f"{self.experiment_name}_{timestamp}")
         os.makedirs(self.run_dir, exist_ok=True)
 
+        self.gait_dir = os.path.join(self.run_dir, "gait")
+        os.makedirs(self.gait_dir, exist_ok=True)
+
+        rospy.set_param("/evaluation/run_dir", self.run_dir)
+        rospy.set_param("/evaluation/gait_log_dir", self.gait_dir)
+
+        rospy.loginfo("Gait logs directory: %s", self.gait_dir)
+
         self.active = False
         self.finished = False
         self.start_time = None
         self.end_time = None
         self.goal = None
+        self.goal_theta = None
 
         self.latest_odom = None
         self.latest_people = []
@@ -114,7 +124,7 @@ class ExperimentLogger:
 
     def _open_csv_files(self):
         specs = {
-            "trajectory": ["t", "x", "y", "theta", "goal_x", "goal_y", "distance_to_goal"],
+            "trajectory": ["t", "x", "y", "theta", "goal_x", "goal_y", "goal_theta", "distance_to_goal"],
             "distances": ["t", "min_human_clearance", "min_obstacle_clearance", "collision_human", "collision_obstacle"],
             "planner": ["t", "event", "value"],
             "zmp": ["t", "zmp_x", "zmp_y", "stability_margin"],
@@ -144,7 +154,18 @@ class ExperimentLogger:
         self.files["events"].flush()
 
     def goal_callback(self, msg):
-        self.goal = (msg.pose.position.x, msg.pose.position.y)
+        
+        q = msg.pose.orientation
+
+        _, _, self.goal_theta = euler_from_quaternion(
+            [q.x, q.y, q.z, q.w]
+        )
+
+        self.goal = (
+            msg.pose.position.x,
+            msg.pose.position.y
+        )
+
         self.active = True
         self.finished = False
         self.goal_reached = False
@@ -293,7 +314,7 @@ class ExperimentLogger:
         gx, gy = self.goal
         dist_to_goal = math.hypot(gx - x, gy - y)
 
-        self.writers["trajectory"].writerow([t, x, y, theta, gx, gy, dist_to_goal])
+        self.writers["trajectory"].writerow([t, x, y, theta, gx, gy, self.goal_theta, dist_to_goal])
 
         human_clearance = float("inf")
         for _pid, hx, hy, hr in self.latest_people:
@@ -347,9 +368,16 @@ class ExperimentLogger:
         for f in self.files.values():
             f.flush()
 
-        if dist_to_goal <= self.goal_tolerance:
+        yaw_error = abs(
+            math.atan2(
+                math.sin(theta - self.goal_theta),
+                math.cos(theta - self.goal_theta)
+            )
+        )
+
+        if dist_to_goal <= self.goal_tolerance and yaw_error <= self.goal_yaw_tolerance:
             self.goal_reached = True
-            self.finish("goal_tolerance_reached")
+            self.finish("goal_pose_tolerance_reached")
         elif t >= self.max_navigation_time:
             self.finish("timeout")
 
@@ -384,6 +412,7 @@ class ExperimentLogger:
             "collision": bool(self.collision_human or self.collision_obstacle),
             "navigation_time": duration,
             "goal_tolerance": self.goal_tolerance,
+            "goal_yaw_tolerance_deg": math.degrees(self.goal_yaw_tolerance),
             "max_navigation_time": self.max_navigation_time,
             "robot_radius": self.robot_radius,
             "collision_margin": self.collision_margin,
