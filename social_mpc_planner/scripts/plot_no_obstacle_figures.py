@@ -203,39 +203,72 @@ def legend_handles():
     ]
 
 
-def set_clean_limits(ax, xs, ys, scenario):
-    xs = np.asarray(xs, dtype=float)
-    ys = np.asarray(ys, dtype=float)
+def collect_extent_points(root, scenario):
+    """Collect all geometry that must be visible for one no-obstacle scenario."""
+    run_dir = find_first_run(root, scenario)
+    traj = load_trajectory(run_dir)
+    replan_x, replan_y = load_replanning_points(run_dir, traj)
+
+    x_raw = traj["x"].to_numpy(dtype=float)
+    y_raw = traj["y"].to_numpy(dtype=float)
+    sx = float(traj["x"].iloc[0])
+    sy = float(traj["y"].iloc[0])
+    gx = float(traj["goal_x"].iloc[-1])
+    gy = float(traj["goal_y"].iloc[-1])
+
+    all_x = np.concatenate([
+        x_raw,
+        np.array([sx, gx]),
+        replan_x if len(replan_x) else np.array([]),
+    ])
+    all_y = np.concatenate([
+        y_raw,
+        np.array([sy, gy]),
+        replan_y if len(replan_y) else np.array([]),
+    ])
+
+    return all_x, all_y
+
+
+def compute_common_limits(root, scenarios, pad_fraction=0.08):
+    """
+    Compute one shared world window using the union of limits.
+
+    The trajectory coordinates are not shifted, centered, or rescaled. The final
+    xlim/ylim are simply the largest required limits across all no-obstacle
+    scenarios, plus a small common padding.
+    """
+    xs_all = []
+    ys_all = []
+
+    for scenario, _, _ in scenarios:
+        xs, ys = collect_extent_points(root, scenario)
+        xs_all.append(xs)
+        ys_all.append(ys)
+
+    xs = np.concatenate(xs_all)
+    ys = np.concatenate(ys_all)
     xs = xs[np.isfinite(xs)]
     ys = ys[np.isfinite(ys)]
 
     xmin, xmax = np.nanmin(xs), np.nanmax(xs)
     ymin, ymax = np.nanmin(ys), np.nanmax(ys)
-    dx = xmax - xmin
-    dy = ymax - ymin
-    if dx < 1e-6:
-        dx = 1.0
-    if dy < 1e-6:
-        dy = 1.0
 
-    pad_x = 0.12 * dx
-    pad_y = 0.20 * dy
+    x_span = max(xmax - xmin, 1.0)
+    y_span = max(ymax - ymin, 1.0)
+    pad = pad_fraction * max(x_span, y_span)
 
-    # For straight paths, keep enough y-span so the figure does not look flat.
-    if scenario in ("no_obstacle_straight", "no_obstacle_straightyaw45"):
-        min_y_span = 1.1
-        y_center = 0.5 * (ymin + ymax)
-        if (dy + 2 * pad_y) < min_y_span:
-            ymin = y_center - min_y_span / 2
-            ymax = y_center + min_y_span / 2
-            pad_y = 0.0
+    return (xmin - pad, xmax + pad), (ymin - pad, ymax + pad)
 
-    ax.set_xlim(xmin - pad_x, xmax + pad_x)
-    ax.set_ylim(ymin - pad_y, ymax + pad_y)
+
+def apply_common_limits(ax, common_limits):
+    xlim, ylim = common_limits
+    ax.set_xlim(*xlim)
+    ax.set_ylim(*ylim)
     ax.set_aspect("equal", adjustable="box")
 
 
-def plot_scenario(root, out_dir, scenario, title, output_name):
+def plot_scenario(root, out_dir, scenario, title, output_name, common_limits):
     run_dir = find_first_run(root, scenario)
     traj = load_trajectory(run_dir)
     replan_x, replan_y = load_replanning_points(run_dir, traj)
@@ -268,9 +301,7 @@ def plot_scenario(root, out_dir, scenario, title, output_name):
             zorder=3,
         )
 
-    all_x = np.concatenate([x_raw, np.array([sx, gx]), replan_x if len(replan_x) else np.array([])])
-    all_y = np.concatenate([y_raw, np.array([sy, gy]), replan_y if len(replan_y) else np.array([])])
-    set_clean_limits(ax, all_x, all_y, scenario)
+    apply_common_limits(ax, common_limits)
 
     draw_goal_orientation(ax, gx, gy, GOAL_YAWS.get(scenario, 0.0))
 
@@ -289,10 +320,11 @@ def plot_scenario(root, out_dir, scenario, title, output_name):
         fontsize=10,
     )
 
-    fig.tight_layout(rect=[0, 0.15, 1, 1])
+    # Fixed margins keep the exported canvas and axes box identical in all files.
+    fig.subplots_adjust(left=0.12, right=0.98, top=0.90, bottom=0.24)
 
-    fig.savefig(out_dir / f"{output_name}.png", dpi=FIG_DPI, bbox_inches="tight")
-    fig.savefig(out_dir / f"{output_name}.pdf", bbox_inches="tight")
+    fig.savefig(out_dir / f"{output_name}.png", dpi=FIG_DPI)
+    fig.savefig(out_dir / f"{output_name}.pdf")
     plt.close(fig)
 
 
@@ -304,8 +336,10 @@ def main():
 
     out_dir = ensure_dir(args.out)
 
+    common_limits = compute_common_limits(args.root, SCENARIOS)
+
     for scenario, title, output_name in SCENARIOS:
-        plot_scenario(args.root, out_dir, scenario, title, output_name)
+        plot_scenario(args.root, out_dir, scenario, title, output_name, common_limits)
 
     print("Saved separate figures to:", out_dir.resolve())
 

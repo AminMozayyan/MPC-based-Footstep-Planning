@@ -55,8 +55,19 @@ class GazeboHumanPredictionNode:
             if not name.startswith(self.person_prefix):
                 continue
 
+            # Use raw Gazebo model position directly.
+            # /gazebo/model_states reports model poses in Gazebo's world coordinates.
+            # For this debugging step, do NOT transform world -> odom.
             x = msg.pose[i].position.x
             y = msg.pose[i].position.y
+
+            rospy.loginfo_throttle(
+                0.5,
+                "Tracking %s from /gazebo/model_states: x=%.3f y=%.3f",
+                name,
+                x,
+                y
+            )
 
             vx = 0.0
             vy = 0.0
@@ -86,7 +97,7 @@ class GazeboHumanPredictionNode:
 
         self.prev_time = now
         self.pub.publish(out)
-        self.publish_human_markers(out)
+        # self.publish_human_markers(out)
 
         # rospy.loginfo_throttle(
         #     2.0,
@@ -122,7 +133,7 @@ class GazeboHumanPredictionNode:
             body_marker.header.stamp = now
             body_marker.ns = "humans"
             body_marker.id = marker_id
-            marker_id += 1
+            marker_id += 1publish_human_markers(out)
 
             body_marker.type = Marker.CYLINDER
             body_marker.action = Marker.ADD

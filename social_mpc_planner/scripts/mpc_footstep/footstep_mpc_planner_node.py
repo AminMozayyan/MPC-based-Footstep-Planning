@@ -6,6 +6,7 @@ import casadi as ca
 import json
 import os
 import subprocess
+from collections import deque
 from nav_msgs.msg import Odometry
 from geometry_msgs.msg import PoseStamped
 from visualization_msgs.msg import Marker, MarkerArray
@@ -54,17 +55,17 @@ class FootstepMPCPlanner:
         self.Q_progress = 3.0
         self.Q_nominal = 30.0
         self.Q_yaw = 0.2
-        self.R_smooth = 15.0
-        self.R_yaw_smooth = 15.0
+        self.R_smooth = 5.0
+        self.R_yaw_smooth = 5.0
 
         self.next_foot_is_left = True
 
         self.obstacles = []
         self.max_obstacles = 9
-        self.foot_clearance = 0.5
+        self.foot_clearance = 0.7
         self.enable_static_obstacles = True
         self.enable_dynamic_obstacles = True
-        self.W_backward = 10000.0
+        self.W_backward = 40000.0
         self.W_obs_slack = 30000.0
         self.W_human_slack = 40000.0
 
@@ -89,6 +90,8 @@ class FootstepMPCPlanner:
         self.execution_horizon_pub = rospy.Publisher("/evaluation/execution_horizon", Int32, queue_size=10)
         self.goal_reached_pub = rospy.Publisher("/evaluation/goal_reached", Bool, queue_size=10)
         self.planner_status_pub = rospy.Publisher("/evaluation/planner_status", String, queue_size=10)
+        self.replan_progress_pub = rospy.Publisher("/evaluation/replan_progress", Float32, queue_size=10)
+        self.stagnation_detected_pub = rospy.Publisher("/evaluation/stagnation_detected", Bool, queue_size=10)
 
         rospy.loginfo("footstep_mpc_planner_node started.")
 
@@ -112,9 +115,9 @@ class FootstepMPCPlanner:
         self.human_prediction_dt = 0.2
 
         self.max_people = 3
-        self.human_safety_margin = 0.2
-        self.default_human_radius = 0.20
-        self.foot_radius = 0.2
+        self.human_safety_margin = 0.5
+        self.default_human_radius = 0.5
+        self.foot_radius = 0.5
 
         self.predicted_people = [
             {
@@ -140,13 +143,32 @@ class FootstepMPCPlanner:
         self.N = self.max_prediction_steps
 
         # Execution horizon parameters
-        # The robot will execute only a short batch from the optimized horizon.
+        # The robot executes only a short batch from the optimized horizon.
         # This value counts the commanded footsteps written to the gait planner,
         # including the optional final support footstep added in make_execution_batch().
-        self.preferred_execution_steps = 4
-        self.max_execution_steps = 8
+        #
+        # Normal mode:
+        #   execute a short batch to preserve receding-horizon behavior.
+        # Stagnation mode:
+        #   temporarily execute a longer batch to escape narrow passages or
+        #   local repeated replanning behavior.
         self.min_execution_steps = 4
+        self.preferred_execution_steps = 4
+        self.stagnation_execution_steps = 6
+        self.max_execution_steps = 8
         self.execution_steps = self.preferred_execution_steps
+
+        # Stagnation detection parameters. Progress is measured as the
+        # projection of the robot displacement onto the direction from the
+        # previous replanning pose toward the goal. If the recent progress is
+        # consistently small, the execution horizon is temporarily increased.
+        self.progress_history = deque(maxlen=3)
+        self.last_replan_start_x = None
+        self.last_replan_start_y = None
+        self.stagnation_progress_threshold = 0.05  # [m] over one executed batch
+        self.stagnation_window = 3
+        self.stagnation_detected = False
+        self.near_obstacle_distance_threshold = 0.70  # [m], center-to-obstacle clearance
 
         self.use_receding_horizon = True
 
@@ -178,6 +200,11 @@ class FootstepMPCPlanner:
         self.goal_received = True
         self.active_goal = True
         self.replan_count = 0
+        self.progress_history.clear()
+        self.last_replan_start_x = None
+        self.last_replan_start_y = None
+        self.stagnation_detected = False
+        self.stagnation_detected_pub.publish(Bool(False))
 
         rospy.loginfo(
             "New footstep goal: x=%.2f y=%.2f theta=%.2f",
@@ -210,8 +237,10 @@ class FootstepMPCPlanner:
         Update the MPC prediction horizon and the execution batch size.
 
         self.N is adaptive and can become long for distant goals.
-        self.execution_steps is deliberately short and capped, so the robot
-        never commits to too many footsteps before the next replanning cycle.
+        self.execution_steps is short in normal operation, but it is
+        temporarily increased when stagnation is detected. This prevents the
+        robot from repeatedly executing only very small initial footsteps near
+        narrow passages.
         """
         dist = self.distance_to_goal()
 
@@ -219,11 +248,11 @@ class FootstepMPCPlanner:
         N = int(math.ceil(dist / self.nominal_step_length)) + self.prediction_margin_steps
         self.N = max(self.min_prediction_steps, min(N, self.max_prediction_steps))
 
-        # Execution horizon: short, bounded, and independent from N.
-        # For very close goals, execute only two commanded footsteps.
-        # Otherwise use the preferred value, but never exceed max_execution_steps.
-        if dist < 0.40:
+        # Execution horizon: bounded and mostly independent from N.
+        if dist < 0.35:
             exec_steps = self.min_execution_steps
+        elif self.should_use_stagnation_escape():
+            exec_steps = self.stagnation_execution_steps
         else:
             exec_steps = self.preferred_execution_steps
 
@@ -233,10 +262,97 @@ class FootstepMPCPlanner:
         )
 
         rospy.loginfo(
-            "Adaptive horizons | dist=%.3f m | N=%d | execution_steps=%d",
+            "Adaptive horizons | dist=%.3f m | N=%d | execution_steps=%d | stagnation=%s | recent_progress=%s",
             dist,
             self.N,
-            self.execution_steps
+            self.execution_steps,
+            str(self.stagnation_detected),
+            ["%.3f" % p for p in list(self.progress_history)]
+        )
+
+    def should_use_stagnation_escape(self):
+        """
+        Return True if the robot has shown little forward progress during the
+        last replanning cycles. The test is intentionally simple and robust:
+        if all recent progress values are below the threshold, the planner
+        sends a longer execution batch.
+        """
+        if len(self.progress_history) < self.stagnation_window:
+            self.stagnation_detected = False
+            self.stagnation_detected_pub.publish(Bool(False))
+            return False
+
+        max_recent_progress = max(self.progress_history)
+        mean_recent_progress = sum(self.progress_history) / float(len(self.progress_history))
+
+        stagnating = (
+            max_recent_progress < self.stagnation_progress_threshold and
+            mean_recent_progress < self.stagnation_progress_threshold
+        )
+
+        # Prefer activating escape behavior near obstacles. If no obstacle data
+        # is available, stagnation alone is still sufficient.
+        if stagnating and len(self.obstacles) > 0:
+            min_clearance = self.min_obstacle_clearance()
+            stagnating = min_clearance < self.near_obstacle_distance_threshold
+
+        self.stagnation_detected = bool(stagnating)
+        self.stagnation_detected_pub.publish(Bool(self.stagnation_detected))
+
+        if self.stagnation_detected:
+            rospy.logwarn(
+                "Stagnation detected. Increasing execution horizon to %d.",
+                self.stagnation_execution_steps
+            )
+            self.planner_status_pub.publish(String("stagnation_escape"))
+
+        return self.stagnation_detected
+
+    def min_obstacle_clearance(self):
+        """
+        Minimum clearance from the robot center to static circular obstacles.
+        This is used only for deciding whether stagnation escape should be
+        activated near obstacles.
+        """
+        if len(self.obstacles) == 0:
+            return float("inf")
+
+        clearances = []
+        for ox, oy, r in self.obstacles:
+            d = math.sqrt((self.x - ox) ** 2 + (self.y - oy) ** 2) - r
+            clearances.append(d)
+
+        return min(clearances)
+
+    def update_replan_progress(self, start_x, start_y, end_x, end_y):
+        """
+        Compute forward progress along the direction from the replanning start
+        pose to the goal. Negative progress is clipped to zero so small
+        oscillations do not cancel forward motion in the history.
+        """
+        goal_dx = self.gx - start_x
+        goal_dy = self.gy - start_y
+        goal_norm = math.sqrt(goal_dx * goal_dx + goal_dy * goal_dy)
+
+        if goal_norm < 1e-6:
+            progress = 0.0
+        else:
+            ux = goal_dx / goal_norm
+            uy = goal_dy / goal_norm
+
+            dx = end_x - start_x
+            dy = end_y - start_y
+
+            progress = dx * ux + dy * uy
+            progress = max(0.0, progress)
+
+        self.progress_history.append(progress)
+        self.replan_progress_pub.publish(Float32(progress))
+
+        rospy.loginfo(
+            "Replan progress: %.3f m | history=%s",
+            progress,
+            ["%.3f" % p for p in list(self.progress_history)]
         )
 
     def normalize_angle_expr(self, angle):
@@ -406,8 +522,8 @@ class FootstepMPCPlanner:
             dx_body = c * dx + s * dy
             dy_body = -s * dx + c * dy
 
-            # backward_amount = ca.fmax(0.0, -dx_body)
-            # cost += self.W_backward * backward_amount * backward_amount
+            backward_amount = 0.5 * (ca.sqrt(dx_body * dx_body + 1e-6) - dx_body)
+            cost += self.W_backward * backward_amount * backward_amount
 
             is_left = self.next_foot_is_left if k % 2 == 0 else not self.next_foot_is_left
             if k == 0:
@@ -452,7 +568,7 @@ class FootstepMPCPlanner:
 
                 cost += self.W_obs_slack * S_obs[i, k] * S_obs[i, k]
             
-            human_constraint_horizon = min(N, 5)
+            human_constraint_horizon = min(N, 14)
 
             if self.enable_dynamic_obstacles and k < human_constraint_horizon:
                 for h, person in enumerate(local_people):
@@ -527,8 +643,10 @@ class FootstepMPCPlanner:
         opts = {
             "ipopt.print_level": 0,
             "print_time": 0,
-            "ipopt.max_iter": 150,
-            "ipopt.tol": 5e-2,
+            "ipopt.max_iter": 250,
+            "ipopt.tol": 1e-1,
+            "ipopt.acceptable_tol": 2e-1,
+            "ipopt.acceptable_iter": 10,
         }
 
         opti.solver("ipopt", opts)
@@ -626,6 +744,13 @@ class FootstepMPCPlanner:
                 return
 
             rospy.sleep(1)  # allow odom to update
+
+            self.update_replan_progress(
+                x_start,
+                y_start,
+                self.x,
+                self.y
+            )
 
             dist = self.distance_to_goal()
             yaw_err = self.heading_error_to_goal()

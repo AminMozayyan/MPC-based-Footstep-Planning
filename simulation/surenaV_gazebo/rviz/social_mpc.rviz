@@ -6,6 +6,8 @@ Panels:
       Expanded:
         - /Global Options1
         - /Status1
+        - /MarkerArray3
+        - /MarkerArray4
       Splitter Ratio: 0.5
     Tree Height: 719
   - Class: rviz/Selection
@@ -56,10 +58,7 @@ Visualization Manager:
       Marker Topic: /footstep_markers
       Name: MarkerArray
       Namespaces:
-        footstep_goal: true
-        footstep_line: true
-        footstep_start: true
-        footsteps: true
+        {}
       Queue Size: 100
       Value: true
     - Class: rviz/MarkerArray
@@ -67,7 +66,7 @@ Visualization Manager:
       Marker Topic: /obstacle_markers
       Name: MarkerArray
       Namespaces:
-        obstacles: true
+        {}
       Queue Size: 100
       Value: true
     - Alpha: 1
@@ -260,7 +259,7 @@ Visualization Manager:
       Marker Topic: /obstacle_markers
       Name: MarkerArray
       Namespaces:
-        obstacles: true
+        {}
       Queue Size: 100
       Value: true
     - Class: rviz/MarkerArray
@@ -268,9 +267,7 @@ Visualization Manager:
       Marker Topic: /human_prediction_markers
       Name: MarkerArray
       Namespaces:
-        human_prediction_points: true
-        human_predictions: true
-        humans: true
+        {}
       Queue Size: 100
       Value: true
     - Alpha: 1
@@ -288,6 +285,14 @@ Visualization Manager:
       Shape: Arrow
       Topic: /move_base_simple/goal
       Unreliable: false
+      Value: true
+    - Class: rviz/Marker
+      Enabled: true
+      Marker Topic: /human_obstacle_marker
+      Name: Marker
+      Namespaces:
+        scripted_human: true
+      Queue Size: 100
       Value: true
   Enabled: true
   Global Options:

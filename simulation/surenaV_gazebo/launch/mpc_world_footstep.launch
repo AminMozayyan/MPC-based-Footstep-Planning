@@ -31,6 +31,12 @@
     <arg name="headless" value="$(arg headless)"/>
   </include>
 
+
+  <node pkg="tf" type="static_transform_publisher"
+      name="odom_to_world"
+      args="0 0 0 0 0 0 odom world 100" />
+
+
   <!-- LOAD THE URDF TO THE PARAMETER SERVER -->
   <param name="robot_description"
     command="$(find xacro)/xacro '$(find surenaV_description)/urdf/surenaV.urdf'" />
@@ -40,7 +46,11 @@
     args="-urdf -model surenaV -param robot_description"/>
 
 
-  
+  <node name="spawn_person_1" pkg="gazebo_ros" type="spawn_model"
+        args="-file $(find surenaV_gazebo)/models/human_actor/model.sdf -sdf -model person_1 -x 2.0 -y 3.0 -z 0.0"/>
+
+
+
 <!-- 
   <node name="spawn_obstacle_1" pkg="gazebo_ros" type="spawn_model"
         args="-file $(find social_mpc_planner)/models/cylinder_obstacle/model.sdf -sdf -model obstacle_1 -x -2.5 -y -2.5 -z 0.5"/>
@@ -79,7 +89,7 @@
         type="gazebo_static_obstacle_node.py"
         output="screen">
     <param name="obstacle_prefix" value="obstacle_"/>
-    <param name="obstacle_radius" value="0.15"/>
+    <param name="obstacle_radius" value="0.2"/>
   </node>
 
   <!-- Scripted human motion: A <-> B -->
@@ -88,15 +98,15 @@
         type="scripted_human_motion_node.py"
         output="screen">
     <param name="model_name" value="person_1"/>
-    <param name="ax" value="1.0"/>
-    <param name="ay" value="-3.0"/>
-    <param name="bx" value="1.0"/>
-    <param name="by" value="3.0"/>
-    <param name="speed" value="0.1"/>
-    <param name="z" value="0.85"/>
+    <param name="ax" value="2.0"/>
+    <param name="ay" value="3.0"/>
+    <param name="bx" value="2.0"/>
+    <param name="by" value="-3.0"/>
+    <param name="speed" value="0.05"/>
+    <param name="z" value="0.0"/>
   </node>
 
-  <!-- Human prediction -->
+  <!-- Human prediction
   <node name="gazebo_human_prediction_node"
         pkg="social_mpc_planner"
         type="gazebo_human_prediction_node.py"
@@ -105,7 +115,7 @@
     <param name="person_radius" value="0.25"/>
     <param name="prediction_dt" value="0.2"/>
     <param name="prediction_horizon" value="150"/>
-  </node>
+  </node> -->
 
   <!-- Robot Manager -->
   <node name="robot_manager_node"

@@ -73,7 +73,11 @@ class ExperimentLogger:
 
         self.latest_odom = None
         self.latest_people = []
+        self.latest_predicted_people = []
         self.latest_obstacles = []
+        self.last_people_signature = None
+        self.last_predicted_people_signature = None
+        self.last_logged_obstacles_signature = None
 
         self.latest_zmp = None
         self.latest_dcm = None
@@ -129,7 +133,10 @@ class ExperimentLogger:
             "planner": ["t", "event", "value"],
             "zmp": ["t", "zmp_x", "zmp_y", "stability_margin"],
             "dcm": ["t", "dcm_x", "dcm_y", "dcm_margin", "com_x", "com_y", "dcm_com_distance"],
+            "humans": ["t", "person_id", "x", "y", "radius"],
+            "predicted_humans": ["t", "person_id", "pred_step", "x", "y", "radius"],
             "events": ["t", "event", "details"],
+            "static_obstacles": ["t", "obstacle_id", "x", "y", "radius"],
         }
         for name, header in specs.items():
             f = open(os.path.join(self.run_dir, f"{name}.csv"), "w", newline="")
@@ -194,15 +201,117 @@ class ExperimentLogger:
     def static_obstacles_callback(self, msg):
         self.latest_obstacles = [(o.x, o.y, o.radius) for o in msg.obstacles]
 
+        # Store obstacle geometry for post-processing and plotting.
+        # Obstacles are usually static, so avoid writing the same list repeatedly.
+        signature = tuple(
+            (round(o.x, 4), round(o.y, 4), round(o.radius, 4))
+            for o in msg.obstacles
+        )
+
+        if signature == self.last_logged_obstacles_signature:
+            return
+
+        self.last_logged_obstacles_signature = signature
+
+        t = self.now_rel()
+        for i, o in enumerate(msg.obstacles):
+            self.writers["static_obstacles"].writerow([
+                t,
+                i,
+                float(o.x),
+                float(o.y),
+                float(o.radius)
+            ])
+
+        self.files["static_obstacles"].flush()
+        self.write_event(
+            "static_obstacles_updated",
+            json.dumps({
+                "num_obstacles": len(msg.obstacles),
+                "obstacles": [
+                    {
+                        "id": i,
+                        "x": float(o.x),
+                        "y": float(o.y),
+                        "radius": float(o.radius)
+                    }
+                    for i, o in enumerate(msg.obstacles)
+                ]
+            })
+        )
+
     def predicted_people_callback(self, msg):
+        """
+        Store both the current/observed human position and the predicted
+        trajectory for later visualization.
+
+        Output files:
+          humans.csv:
+            t, person_id, x, y, radius
+
+          predicted_humans.csv:
+            t, person_id, pred_step, x, y, radius
+        """
         people = []
+        predicted_people = []
+
         for p in msg.people:
+            radius = p.radius if p.radius > 0.0 else self.default_human_radius
+
             if len(p.trajectory) == 0:
                 continue
-            pose = p.trajectory[0]
-            radius = p.radius if p.radius > 0.0 else self.default_human_radius
-            people.append((p.id, pose.x, pose.y, radius))
+
+            # First point is treated as the current/observed human position.
+            pose0 = p.trajectory[0]
+            people.append((p.id, pose0.x, pose0.y, radius))
+
+            traj = []
+            for k, pose in enumerate(p.trajectory):
+                traj.append((k, pose.x, pose.y, radius))
+
+            predicted_people.append({
+                "id": p.id,
+                "radius": radius,
+                "trajectory": traj
+            })
+
         self.latest_people = people
+        self.latest_predicted_people = predicted_people
+
+        if not self.active or self.finished:
+            return
+
+        # Log current human positions. Avoid writing exact duplicates at the same state.
+        people_signature = tuple(
+            (pid, round(x, 4), round(y, 4), round(r, 4))
+            for pid, x, y, r in people
+        )
+
+        if people_signature != self.last_people_signature:
+            t = self.now_rel()
+            for pid, x, y, r in people:
+                self.writers["humans"].writerow([t, pid, x, y, r])
+            self.files["humans"].flush()
+            self.last_people_signature = people_signature
+
+        # Log predicted trajectories. These are time-stamped by the planning/logger
+        # receive time and indexed by pred_step.
+        pred_signature_items = []
+        for person in predicted_people:
+            pid = person["id"]
+            for k, x, y, r in person["trajectory"]:
+                pred_signature_items.append((pid, k, round(x, 4), round(y, 4), round(r, 4)))
+
+        pred_signature = tuple(pred_signature_items)
+
+        if pred_signature != self.last_predicted_people_signature:
+            t = self.now_rel()
+            for person in predicted_people:
+                pid = person["id"]
+                for k, x, y, r in person["trajectory"]:
+                    self.writers["predicted_humans"].writerow([t, pid, k, x, y, r])
+            self.files["predicted_humans"].flush()
+            self.last_predicted_people_signature = pred_signature
 
     def mpc_solve_time_callback(self, msg):
         if not self.active:
@@ -416,6 +525,11 @@ class ExperimentLogger:
             "max_navigation_time": self.max_navigation_time,
             "robot_radius": self.robot_radius,
             "collision_margin": self.collision_margin,
+            "num_static_obstacles": len(self.latest_obstacles),
+            "static_obstacles": [
+                {"id": i, "x": ox, "y": oy, "radius": r}
+                for i, (ox, oy, r) in enumerate(self.latest_obstacles)
+            ],
             "minimum_human_distance": self.finite_or_none(self.min_human_clearance),
             "minimum_obstacle_distance": self.finite_or_none(self.min_obstacle_clearance),
             "minimum_zmp_stability_margin": self.finite_or_none(self.min_zmp_margin),

@@ -13,7 +13,7 @@ class GazeboStaticObstacleNode:
         rospy.init_node("gazebo_static_obstacle_node")
 
         self.obstacle_prefix = rospy.get_param("~obstacle_prefix", "obstacle_")
-        self.obstacle_radius = rospy.get_param("~obstacle_radius", 0.15)
+        self.obstacle_radius = rospy.get_param("~obstacle_radius", 0.2)
 
         self.pub = rospy.Publisher(
             "/static_obstacles",
