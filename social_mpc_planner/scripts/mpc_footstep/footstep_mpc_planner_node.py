@@ -51,12 +51,12 @@ class FootstepMPCPlanner:
         self.Q_goal = 80.0
         # Soft terminal weight for the desired final heading.
         # It is intentionally smaller than Q_goal so position tracking remains dominant.
-        self.Q_goal_yaw = 80.0
+        self.Q_goal_yaw = 10.0
         self.Q_progress = 3.0
         self.Q_nominal = 30.0
         self.Q_yaw = 0.2
-        self.R_smooth = 5.0
-        self.R_yaw_smooth = 5.0
+        self.R_smooth = 7.0
+        self.R_yaw_smooth = 7.0
 
         self.next_foot_is_left = True
 
@@ -65,7 +65,7 @@ class FootstepMPCPlanner:
         self.foot_clearance = 0.7
         self.enable_static_obstacles = True
         self.enable_dynamic_obstacles = True
-        self.W_backward = 40000.0
+        self.W_backward = 60000.0
         self.W_obs_slack = 30000.0
         self.W_human_slack = 40000.0
 
@@ -105,19 +105,19 @@ class FootstepMPCPlanner:
             "COM_height": 0.68,
             "com_offset": 0.01,
             "t_step": 1.0,
-            "t_double_support": 0.1,
+            "t_double_support": 0.08,
             "dt": 0.005,
             "alpha": 0.44,
-            "hand_swing_angle": 15.0,
+            "hand_swing_angle": 0.0,
         }
 
         self.step_time = 1.0
         self.human_prediction_dt = 0.2
 
         self.max_people = 3
-        self.human_safety_margin = 0.5
-        self.default_human_radius = 0.5
-        self.foot_radius = 0.5
+        self.human_safety_margin = 0.65
+        self.default_human_radius = 0.25
+        self.foot_radius = 0.4
 
         self.predicted_people = [
             {
@@ -152,8 +152,8 @@ class FootstepMPCPlanner:
         # Stagnation mode:
         #   temporarily execute a longer batch to escape narrow passages or
         #   local repeated replanning behavior.
-        self.min_execution_steps = 4
-        self.preferred_execution_steps = 4
+        self.min_execution_steps = 6
+        self.preferred_execution_steps = 6
         self.stagnation_execution_steps = 6
         self.max_execution_steps = 8
         self.execution_steps = self.preferred_execution_steps
@@ -568,7 +568,7 @@ class FootstepMPCPlanner:
 
                 cost += self.W_obs_slack * S_obs[i, k] * S_obs[i, k]
             
-            human_constraint_horizon = min(N, 14)
+            human_constraint_horizon = min(N, 30)
 
             if self.enable_dynamic_obstacles and k < human_constraint_horizon:
                 for h, person in enumerate(local_people):

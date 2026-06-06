@@ -41,31 +41,52 @@
   <param name="robot_description"
     command="$(find xacro)/xacro '$(find surenaV_description)/urdf/surenaV.urdf'" />
 
-  <!-- SPAWN THE ROBOT IN GAZEBO -->
+  <!-- SPAWN THE ROBOT IN GAZEBO -->      - {id: 3, model_name: person_3, ax: 7.0,  ay:  3.0,  bx: 5.0, by: -3.0,  speed: 0.05, radius: 0.25}
+      - {id: 4, model_name: person_4, ax: 8.0,  ay: 3.0,  bx: 2.0,  by: -3.0, speed: 0.04, radius: 0.25}
+      - {id: 5, model_name: person_5, ax: 12.0, ay: -2.5, bx: 12.0, by: 2.5,  speed: 0.03, radius: 0.25}
+
   <node name="urdf_spawner" pkg="gazebo_ros" type="spawn_model" respawn="false" output="screen"
     args="-urdf -model surenaV -param robot_description"/>
 
 
   <node name="spawn_person_1" pkg="gazebo_ros" type="spawn_model"
-        args="-file $(find surenaV_gazebo)/models/human_actor/model.sdf -sdf -model person_1 -x 2.0 -y 3.0 -z 0.0"/>
+        args="-file $(find surenaV_gazebo)/models/human_actor/model.sdf -sdf -model person_1 -x 2 -y 1.5 -z 0.0"/>
+
+  <node name="spawn_person_2" pkg="gazebo_ros" type="spawn_model"
+        args="-file $(find surenaV_gazebo)/models/human_actor/model.sdf -sdf -model person_2 -x 4.0 -y -2.5 -z 0.0"/>
+
+  <node name="spawn_person_3" pkg="gazebo_ros" type="spawn_model"
+        args="-file $(find surenaV_gazebo)/models/human_actor/model.sdf -sdf -model person_3 -x 8.0 -y -5.0 -z 0.0"/>  
+
+
+  <!-- <node name="spawn_person_4" pkg="gazebo_ros" type="spawn_model"
+        args="-file $(find surenaV_gazebo)/models/human_actor/model.sdf -sdf -model person_4 -x 10.0 -y 3.0 -z 0.0"/>
+
+  <node name="spawn_person_5" pkg="gazebo_ros" type="spawn_model"
+        args="-file $(find surenaV_gazebo)/models/human_actor/model.sdf -sdf -model person_5 -x 12.0 -y -2.5 -z 0.0"/> -->
 
 
 
-<!-- 
   <node name="spawn_obstacle_1" pkg="gazebo_ros" type="spawn_model"
-        args="-file $(find social_mpc_planner)/models/cylinder_obstacle/model.sdf -sdf -model obstacle_1 -x -2.5 -y -2.5 -z 0.5"/>
+        args="-file $(find social_mpc_planner)/models/cylinder_obstacle/model.sdf -sdf -model obstacle_1 -x 4 -y -1.5 -z 0.5"/>
 
   <node name="spawn_obstacle_2" pkg="gazebo_ros" type="spawn_model"
-        args="-file $(find social_mpc_planner)/models/cylinder_obstacle/model.sdf -sdf -model obstacle_2 -x -2.5 -y 0.0 -z 0.5"/>
+        args="-file $(find social_mpc_planner)/models/cylinder_obstacle/model.sdf -sdf -model obstacle_2 -x 6 -y 0.0 -z 0.5"/>
 
   <node name="spawn_obstacle_3" pkg="gazebo_ros" type="spawn_model"
-        args="-file $(find social_mpc_planner)/models/cylinder_obstacle/model.sdf -sdf -model obstacle_3 -x -2.5 -y 2.5 -z 0.5"/>
+        args="-file $(find social_mpc_planner)/models/cylinder_obstacle/model.sdf -sdf -model obstacle_3 -x 0 -y -3 -z 0.5"/>
 
   <node name="spawn_obstacle_4" pkg="gazebo_ros" type="spawn_model"
-        args="-file $(find social_mpc_planner)/models/cylinder_obstacle/model.sdf -sdf -model obstacle_4 -x 0.0 -y -2.5 -z 0.5"/>
+        args="-file $(find social_mpc_planner)/models/cylinder_obstacle/model.sdf -sdf -model obstacle_4 -x 0 -y 3 -z 0.5"/>
 
-  <node name="spawn_obstacle_6" pkg="gazebo_ros" type="spawn_model"
-        args="-file $(find social_mpc_planner)/models/cylinder_obstacle/model.sdf -sdf -model obstacle_6 -x 0.0 -y 2.5 -z 0.5"/>
+  <node name="spawn_obstacle_5" pkg="gazebo_ros" type="spawn_model"
+        args="-file $(find social_mpc_planner)/models/cylinder_obstacle/model.sdf -sdf -model obstacle_5 -x 4 -y 1.5 -z 0.5"/>
+
+  <!-- <node name="spawn_obstacle_4" pkg="gazebo_ros" type="spawn_model"
+        args="-file $(find social_mpc_planner)/models/cylinder_obstacle/model.sdf -sdf -model obstacle_4 -x 0.0 -y -2.5 -z 0.5"/> -->
+
+  <!-- <node name="spawn_obstacle_6" pkg="gazebo_ros" type="spawn_model"
+        args="-file $(find social_mpc_planner)/models/cylinder_obstacle/model.sdf -sdf5 -model obstacle_6 -x 0.0 -y 2.5 -z 0.5"/>
 
   <node name="spawn_obstacle_7" pkg="gazebo_ros" type="spawn_model"
         args="-file $(find social_mpc_planner)/models/cylinder_obstacle/model.sdf -sdf -model obstacle_7 -x 2.5 -y -2.5 -z 0.5"/>
@@ -78,6 +99,11 @@
 
 
   <node name="spawn_person_1" pkg="gazebo_ros" type="spawn_model"
+  <node name="spawn_person_2" pkg="gazebo_ros" type="spawn_model"
+        args="-file $(find surenaV_gazebo)/models/human_actor/model.sdf -sdf -model person_2 -x -2.0 -y 2.0 -z 0.0"/>
+
+  <node name="spawn_person_3" pkg="gazebo_ros" type="spawn_model"
+        args="-file $(find surenaV_gazebo)/models/human_actor/model.sdf -sdf -model person_3 -x 5.0 -y -3.0 -z 0.0"/>
         args="-file $(find surenaV_gazebo)/models/human_actor/model.sdf -sdf -model person_1 -x 1.0 -y -2.5 -z -0.5"/> -->
 
 
@@ -92,30 +118,26 @@
     <param name="obstacle_radius" value="0.2"/>
   </node>
 
-  <!-- Scripted human motion: A <-> B -->
-  <node name="scripted_human_motion_node"
+  <!-- Scripted multi-human motion: each human moves between A(ax,ay) and B(bx,by). -->
+  <node name="scripted_multi_human_motion_node"
         pkg="social_mpc_planner"
         type="scripted_human_motion_node.py"
         output="screen">
-    <param name="model_name" value="person_1"/>
-    <param name="ax" value="2.0"/>
-    <param name="ay" value="3.0"/>
-    <param name="bx" value="2.0"/>
-    <param name="by" value="-3.0"/>
-    <param name="speed" value="0.05"/>
-    <param name="z" value="0.0"/>
-  </node>
-
-  <!-- Human prediction
-  <node name="gazebo_human_prediction_node"
-        pkg="social_mpc_planner"
-        type="gazebo_human_prediction_node.py"
-        output="screen">
-    <param name="person_prefix" value="person_"/>
-    <param name="person_radius" value="0.25"/>
     <param name="prediction_dt" value="0.2"/>
     <param name="prediction_horizon" value="150"/>
-  </node> -->
+    <param name="person_radius" value="0.25"/>
+    <param name="z" value="0.0"/>
+    <param name="rate" value="20.0"/>
+
+    <rosparam param="humans">
+      - {id: 1, model_name: person_1, ax: 2.0,  ay: 2,  bx: 2.0, by: -10.0,  speed: 0.03, radius: 0.25, yaw_offset: 1.5708}
+      - {id: 2, model_name: person_2, ax: 5.0,  ay: -3.0,  bx: 5.0, by: 10.0, speed: 0.04, radius: 0.25, yaw_offset: 1.5708}
+      - {id: 3, model_name: person_3, ax: 1.5,  ay: -1.0,  bx: 15.0, by: 6.0,  speed: 0.04, radius: 0.25, yaw_offset: 1.5708}
+      <!-- - {id: 4, model_name: person_4, ax: 4.5,  ay: 2.0,  bx: 4.0,  by: -15.0, speed: 0.03, radius: 0.25, yaw_offset: 1.5708}
+      - {id: 5, model_name: person_5, ax: 0.0, ay: -2.4, bx: 15.0, by: -2.0,  speed: 0.045, radius: 0.25, yaw_offset: 1.5708} -->
+    </rosparam>
+  </node>
+
 
   <!-- Robot Manager -->
   <node name="robot_manager_node"

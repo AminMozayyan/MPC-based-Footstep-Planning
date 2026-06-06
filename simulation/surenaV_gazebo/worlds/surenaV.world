@@ -30,7 +30,7 @@
          WALLS (VISIBLE & THICK)
     ======================== -->
 
-    <!-- North -->
+    <!-- North
     <model name="wall_north">
       <static>true</static>
       <pose>0 6 1 0 0 0</pose>
@@ -116,7 +116,7 @@
           </material>
         </visual>
       </link>
-    </model>
+    </model> -->
 
 
   </world>
