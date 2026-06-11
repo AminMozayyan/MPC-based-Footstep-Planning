@@ -40,11 +40,11 @@ class FootstepMPCPlanner:
 
         # lateral distance between opposite feet
         self.min_cross_width = 0.2
-        self.max_cross_width = 0.25
+        self.max_cross_width = 0.22
         self.nominal_cross_width = 2.0 * self.step_width
 
         self.min_step_x = -0.15
-        self.max_step_x = 0.2
+        self.max_step_x = 0.18
 
         self.max_yaw_step = 0.08
 
@@ -65,9 +65,9 @@ class FootstepMPCPlanner:
         self.foot_clearance = 0.7
         self.enable_static_obstacles = True
         self.enable_dynamic_obstacles = True
-        self.W_backward = 60000.0
-        self.W_obs_slack = 30000.0
-        self.W_human_slack = 40000.0
+        self.W_backward = 500.0
+        self.W_obs_slack = 150000.0
+        self.W_human_slack = 100000.0
 
         self.static_obstacles_sub = rospy.Subscriber(
             "/static_obstacles",
@@ -105,17 +105,39 @@ class FootstepMPCPlanner:
             "COM_height": 0.68,
             "com_offset": 0.01,
             "t_step": 1.0,
-            "t_double_support": 0.08,
+            "t_double_support": 0.1,
             "dt": 0.005,
             "alpha": 0.44,
             "hand_swing_angle": 0.0,
         }
 
         self.step_time = 1.0
-        self.human_prediction_dt = 0.2
+        self.human_prediction_dt = 0.5
 
         self.max_people = 3
-        self.human_safety_margin = 0.65
+
+        # Base deterministic human avoidance margin [m].
+        # This is the margin used at the beginning of the prediction horizon.
+        self.human_safety_margin = 0.45
+
+        # Uncertainty-aware prediction margin parameters.
+        # The predicted human position is less reliable at later prediction times.
+        # Therefore, the safety distance is inflated as k increases.
+        #
+        # Model used in the MPC constraint:
+        #   uncertainty_margin(k) = min(
+        #       human_uncertainty_max_margin,
+        #       human_uncertainty_initial_margin + human_uncertainty_growth_per_step * k^p
+        #   )
+        #
+        # With the default values, the first predicted points are close to the
+        # original planner, while the final predicted points get a larger margin.
+        self.enable_human_uncertainty_margin = rospy.get_param("~enable_human_uncertainty_margin", True)
+        self.human_uncertainty_initial_margin = rospy.get_param("~human_uncertainty_initial_margin", 0.00)
+        self.human_uncertainty_growth_per_step = rospy.get_param("~human_uncertainty_growth_per_step", 0.05)
+        self.human_uncertainty_power = rospy.get_param("~human_uncertainty_power", 1.0)
+        self.human_uncertainty_max_margin = rospy.get_param("~human_uncertainty_max_margin", 0.2)
+
         self.default_human_radius = 0.25
         self.foot_radius = 0.4
 
@@ -136,9 +158,9 @@ class FootstepMPCPlanner:
 
         # Adaptive MPC horizon parameters
         # N is the prediction / optimization horizon and is updated at every replanning cycle.
-        self.min_prediction_steps = 4
-        self.max_prediction_steps = 20
-        self.nominal_step_length = 0.15
+        self.min_prediction_steps = 26
+        self.max_prediction_steps = 26
+        self.nominal_step_length = 0.16
         self.prediction_margin_steps = 3
         self.N = self.max_prediction_steps
 
@@ -152,10 +174,10 @@ class FootstepMPCPlanner:
         # Stagnation mode:
         #   temporarily execute a longer batch to escape narrow passages or
         #   local repeated replanning behavior.
-        self.min_execution_steps = 6
-        self.preferred_execution_steps = 6
+        self.min_execution_steps = 10
+        self.preferred_execution_steps = 10
         self.stagnation_execution_steps = 6
-        self.max_execution_steps = 8
+        self.max_execution_steps = 10
         self.execution_steps = self.preferred_execution_steps
 
         # Stagnation detection parameters. Progress is measured as the
@@ -174,7 +196,7 @@ class FootstepMPCPlanner:
 
         self.goal_tolerance = 0.1
         self.goal_yaw_tolerance = math.radians(10.0)
-        self.max_replan_cycles = 30
+        self.max_replan_cycles = 100
         self.replan_count = 0
         self.is_walking = False
         self.active_goal = False
@@ -373,8 +395,33 @@ class FootstepMPCPlanner:
         yw = y0 + math.sin(th0) * xl + math.cos(th0) * yl
 
         return xw, yw
+
+    def human_uncertainty_margin_at_step(self, k):
+        """
+        Return an additional safety margin [m] for predicted humans at MPC step k.
+
+        The farther a point is in the prediction horizon, the less certain the
+        predicted human position is. This function inflates the collision
+        avoidance radius for later predicted points.
+        """
+        if not self.enable_human_uncertainty_margin:
+            return 0.0
+
+        k_float = float(max(0, k))
+        margin = (
+            float(self.human_uncertainty_initial_margin) +
+            float(self.human_uncertainty_growth_per_step) *
+            (k_float ** float(self.human_uncertainty_power))
+        )
+
+        margin = max(0.0, margin)
+        margin = min(float(self.human_uncertainty_max_margin), margin)
+        return margin
         
     def predicted_people_callback(self, msg):
+        if msg.dt > 1e-6:
+            self.human_prediction_dt = msg.dt
+
         people = []
 
         for person in msg.people[:self.max_people]:
@@ -401,11 +448,6 @@ class FootstepMPCPlanner:
 
         self.predicted_people = people
 
-        # rospy.loginfo_throttle(
-        #     2.0,
-        #     "Footstep MPC received %d predicted people",
-        #     len(msg.people)
-        # )
 
     def plan_footsteps(self):
         if self.is_walking:
@@ -434,6 +476,14 @@ class FootstepMPCPlanner:
         self.prediction_horizon_pub.publish(Int32(self.N))
         self.execution_horizon_pub.publish(Int32(self.execution_steps))
         self.planner_status_pub.publish(String("planning"))
+
+        if self.enable_dynamic_obstacles and self.enable_human_uncertainty_margin:
+            rospy.loginfo(
+                "Human prediction uncertainty margin | first=%.3f m | last=%.3f m | max=%.3f m",
+                self.human_uncertainty_margin_at_step(0),
+                self.human_uncertainty_margin_at_step(max(0, self.N - 1)),
+                self.human_uncertainty_max_margin
+            )
 
         N = self.N
         x_start = self.x
@@ -469,7 +519,10 @@ class FootstepMPCPlanner:
                 for k in range(N):
                     t_k = k * self.step_time
                     human_index = int(round(t_k / self.human_prediction_dt))
-                    human_index = min(human_index, len(traj) - 1)
+
+                    if human_index >= len(traj):
+                        traj_l.append(None)
+                        continue
 
                     hx, hy = traj[human_index]
 
@@ -479,6 +532,8 @@ class FootstepMPCPlanner:
                     )
 
                     traj_l.append((hx_l, hy_l))
+
+
 
                 local_people.append({
                     "id": person["id"],
@@ -567,15 +622,25 @@ class FootstepMPCPlanner:
                 opti.subject_to(dist_sq + S_obs[i, k] >= safe_dist * safe_dist)
 
                 cost += self.W_obs_slack * S_obs[i, k] * S_obs[i, k]
-            
-            human_constraint_horizon = min(N, 30)
+
+
+
+            human_constraint_horizon = N
 
             if self.enable_dynamic_obstacles and k < human_constraint_horizon:
                 for h, person in enumerate(local_people):
-                    hx, hy = person["trajectory"][k]
-                    hr = person["radius"]
+                     
+                    human_state = person["trajectory"][k]
 
-                    safe_dist = hr + self.human_safety_margin + self.foot_radius
+                    if human_state is None:
+                        continue
+
+                    hx, hy = human_state
+                    hr = person["radius"]
+                    
+
+                    uncertainty_margin = self.human_uncertainty_margin_at_step(k)
+                    safe_dist = hr + self.human_safety_margin + self.foot_radius + uncertainty_margin
 
                     dx_h = xk - hx
                     dy_h = yk - hy
@@ -743,7 +808,7 @@ class FootstepMPCPlanner:
             if not success:
                 return
 
-            rospy.sleep(1)  # allow odom to update
+            rospy.sleep(0.1)  # allow odom to update
 
             self.update_replan_progress(
                 x_start,

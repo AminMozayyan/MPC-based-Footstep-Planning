@@ -35,7 +35,11 @@ from geometry_msgs.msg import PoseStamped, PointStamped, PolygonStamped
 from std_msgs.msg import Float32, Int32, Bool, String
 from tf.transformations import euler_from_quaternion
 
-from social_mpc_planner.msg import CircularObstacleArray, PredictedPeople
+from social_mpc_planner.msg import (
+    CircularObstacleArray,
+    PredictedPeople,
+    PredictedPeopleUncertainty,
+)
 
 
 class ExperimentLogger:
@@ -74,9 +78,11 @@ class ExperimentLogger:
         self.latest_odom = None
         self.latest_people = []
         self.latest_predicted_people = []
+        self.latest_predicted_people_uncertainty = []
         self.latest_obstacles = []
         self.last_people_signature = None
         self.last_predicted_people_signature = None
+        self.last_predicted_people_uncertainty_signature = None
         self.last_logged_obstacles_signature = None
 
         self.latest_zmp = None
@@ -108,6 +114,11 @@ class ExperimentLogger:
         rospy.Subscriber("/move_base_simple/goal", PoseStamped, self.goal_callback)
         rospy.Subscriber("/static_obstacles", CircularObstacleArray, self.static_obstacles_callback)
         rospy.Subscriber("/predicted_people", PredictedPeople, self.predicted_people_callback)
+        rospy.Subscriber(
+            "/predicted_people_uncertainty",
+            PredictedPeopleUncertainty,
+            self.predicted_people_uncertainty_callback,
+        )
 
         rospy.Subscriber("/evaluation/mpc_solve_time", Float32, self.mpc_solve_time_callback)
         rospy.Subscriber("/evaluation/replan_cycle_time", Float32, self.replan_cycle_time_callback)
@@ -135,6 +146,7 @@ class ExperimentLogger:
             "dcm": ["t", "dcm_x", "dcm_y", "dcm_margin", "com_x", "com_y", "dcm_com_distance"],
             "humans": ["t", "person_id", "x", "y", "radius"],
             "predicted_humans": ["t", "person_id", "pred_step", "x", "y", "radius"],
+            "predicted_human_uncertainty": ["t", "person_id", "pred_step", "sigma_x", "sigma_y", "rho"],
             "events": ["t", "event", "details"],
             "static_obstacles": ["t", "obstacle_id", "x", "y", "radius"],
         }
@@ -312,6 +324,71 @@ class ExperimentLogger:
                     self.writers["predicted_humans"].writerow([t, pid, k, x, y, r])
             self.files["predicted_humans"].flush()
             self.last_predicted_people_signature = pred_signature
+
+    def predicted_people_uncertainty_callback(self, msg):
+        """
+        Store learned prediction uncertainty for later plotting/video rendering.
+
+        Input topic:
+          /predicted_people_uncertainty
+
+        Output file:
+          predicted_human_uncertainty.csv:
+            t, person_id, pred_step, sigma_x, sigma_y, rho
+        """
+        predicted_uncertainty = []
+
+        for p in msg.people:
+            max_len = max(len(p.sigma_x), len(p.sigma_y), len(p.rho))
+            trajectory_unc = []
+
+            for k in range(max_len):
+                sx = float(p.sigma_x[k]) if k < len(p.sigma_x) else float("nan")
+                sy = float(p.sigma_y[k]) if k < len(p.sigma_y) else float("nan")
+                corr = float(p.rho[k]) if k < len(p.rho) else float("nan")
+                trajectory_unc.append((k, sx, sy, corr))
+
+            predicted_uncertainty.append({
+                "id": p.id,
+                "trajectory": trajectory_unc,
+            })
+
+        self.latest_predicted_people_uncertainty = predicted_uncertainty
+
+        if not self.active or self.finished:
+            return
+
+        signature_items = []
+        for person in predicted_uncertainty:
+            pid = person["id"]
+            for k, sx, sy, corr in person["trajectory"]:
+                signature_items.append((
+                    pid,
+                    k,
+                    round(sx, 5) if math.isfinite(sx) else sx,
+                    round(sy, 5) if math.isfinite(sy) else sy,
+                    round(corr, 5) if math.isfinite(corr) else corr,
+                ))
+
+        signature = tuple(signature_items)
+        if signature == self.last_predicted_people_uncertainty_signature:
+            return
+
+        t = self.now_rel()
+        for person in predicted_uncertainty:
+            pid = person["id"]
+            for k, sx, sy, corr in person["trajectory"]:
+                self.writers["predicted_human_uncertainty"].writerow([
+                    t,
+                    pid,
+                    k,
+                    sx,
+                    sy,
+                    corr,
+                ])
+
+        self.files["predicted_human_uncertainty"].flush()
+        self.last_predicted_people_uncertainty_signature = signature
 
     def mpc_solve_time_callback(self, msg):
         if not self.active:

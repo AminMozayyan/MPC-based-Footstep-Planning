@@ -65,6 +65,8 @@ add_message_files(
    HumanValidation.msg
    SocialSTGCNNPersonPrediction.msg
    SocialSTGCNNPredictionArray.msg
+   PredictedPersonUncertainty.msg
+   PredictedPeopleUncertainty.msg
 )
 
 

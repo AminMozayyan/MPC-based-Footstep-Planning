@@ -6,6 +6,7 @@ Panels:
       Expanded:
         - /Global Options1
         - /Status1
+        - /Grid1
         - /MarkerArray3
         - /MarkerArray4
       Splitter Ratio: 0.5
@@ -50,7 +51,7 @@ Visualization Manager:
         Y: 0
         Z: 0
       Plane: XY
-      Plane Cell Count: 10
+      Plane Cell Count: 15
       Reference Frame: <Fixed Frame>
       Value: true
     - Class: rviz/MarkerArray
@@ -291,7 +292,7 @@ Visualization Manager:
       Marker Topic: /human_obstacle_marker
       Name: Marker
       Namespaces:
-        scripted_human: true
+        scripted_humans: true
       Queue Size: 100
       Value: true
   Enabled: true
