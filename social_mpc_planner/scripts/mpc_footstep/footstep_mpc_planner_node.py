@@ -60,8 +60,14 @@ class FootstepMPCPlanner:
 
         self.next_foot_is_left = True
 
+        # Static obstacles received from /static_obstacles.
+        # all_static_obstacles keeps the full YAML/Gazebo obstacle set, while
+        # self.obstacles is refreshed before each MPC solve with only the nearest
+        # obstacles to reduce the number of CasADi/IPOPT constraints.
+        self.all_static_obstacles = []
         self.obstacles = []
-        self.max_obstacles = 9
+        self.max_obstacles = rospy.get_param("~max_static_obstacles", 10)
+        self.obstacle_selection_radius = rospy.get_param("~obstacle_selection_radius", 3.0)
         self.foot_clearance = 0.7
         self.enable_static_obstacles = True
         self.enable_dynamic_obstacles = True
@@ -499,6 +505,10 @@ class FootstepMPCPlanner:
         # This is the actual goal orientation from PoseStamped, not only the direction to the goal point.
         goal_theta_final_l = self.wrap_angle(self.gtheta - th_start)
 
+        # Select only the nearest static obstacles to the current robot pose.
+        # This avoids adding hundreds of circular-obstacle constraints to the MPC.
+        self.select_nearest_static_obstacles()
+
         local_obstacles = []
 
         if self.enable_static_obstacles:
@@ -521,8 +531,7 @@ class FootstepMPCPlanner:
                     human_index = int(round(t_k / self.human_prediction_dt))
 
                     if human_index >= len(traj):
-                        traj_l.append(None)
-                        continue
+                        human_index = len(traj) - 1
 
                     hx, hy = traj[human_index]
 
@@ -865,18 +874,83 @@ class FootstepMPCPlanner:
             )
     
     def static_obstacles_callback(self, msg):
+        """
+        Store the full static-obstacle list.
+
+        The planner should not simply use the first N obstacles from the message,
+        because the YAML/world publisher may contain hundreds of circles and their
+        order is unrelated to the robot position. The nearest subset is selected
+        immediately before each MPC solve using the latest odometry.
+        """
         obstacles = []
 
-        for obs in msg.obstacles[:self.max_obstacles]:
+        for obs in msg.obstacles:
             obstacles.append((obs.x, obs.y, obs.radius))
 
-        self.obstacles = obstacles
+        self.all_static_obstacles = obstacles
 
-        # rospy.loginfo_throttle(
-        #     2.0,
-        #     "Footstep planner received %d static obstacles",
-        #     len(self.obstacles)
-        # )
+        # If odometry is not available yet, keep a small fallback subset so other
+        # helper functions can still operate safely. Once odom is received, the
+        # subset is updated by select_nearest_static_obstacles().
+        if not self.odom_received:
+            self.obstacles = obstacles[:self.max_obstacles]
+
+        rospy.loginfo_throttle(
+            2.0,
+            "Received %d static obstacles; MPC will use up to %d nearest obstacles",
+            len(self.all_static_obstacles),
+            self.max_obstacles
+        )
+
+    def select_nearest_static_obstacles(self):
+        """
+        Select the closest static obstacles to the current robot pose.
+
+        Distance is computed as center distance minus obstacle radius, so larger
+        obstacles are prioritized correctly. The optional selection radius removes
+        far-away obstacles before limiting the result to max_obstacles. If no
+        obstacle falls inside the radius, the globally closest obstacles are used
+        as a fallback.
+        """
+        if len(self.all_static_obstacles) == 0:
+            self.obstacles = []
+            return
+
+        scored = []
+        fallback_scored = []
+
+        for ox, oy, r in self.all_static_obstacles:
+            clearance = math.sqrt((self.x - ox) ** 2 + (self.y - oy) ** 2) - r
+            item = (clearance, ox, oy, r)
+            fallback_scored.append(item)
+
+            if clearance <= self.obstacle_selection_radius:
+                scored.append(item)
+
+        if len(scored) == 0:
+            scored = fallback_scored
+
+        scored.sort(key=lambda item: item[0])
+        selected = scored[:self.max_obstacles]
+
+        self.obstacles = [
+            (ox, oy, r)
+            for _, ox, oy, r in selected
+        ]
+
+        if len(selected) > 0:
+            nearest_clearance = selected[0][0]
+        else:
+            nearest_clearance = float("inf")
+
+        rospy.loginfo_throttle(
+            1.0,
+            "Selected %d/%d nearest static obstacles for MPC | nearest_clearance=%.3f m | radius=%.2f m",
+            len(self.obstacles),
+            len(self.all_static_obstacles),
+            nearest_clearance,
+            self.obstacle_selection_radius
+        )
 
     def publish_markers(self, footsteps):
         markers = MarkerArray()

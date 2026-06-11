@@ -1,0 +1,174 @@
+<launch>
+  <env name="GAZEBO_MODEL_PATH"
+    value="$(optenv GAZEBO_MODEL_PATH):/home/mozayyan/Surena_ws/src/surenaV_core/simulation/surenaV_gazebo/models"/>
+
+
+  <!-- These are the arguments passed to this launch file, for example paused:=true -->
+  <arg name="paused" default="true"/>
+  <arg name="use_sim_time" default="true"/>
+  <arg name="gui" default="true"/>
+  <arg name="headless" default="false"/>
+  <arg name="debug" default="false"/>
+
+  <arg name="eval_output_root" default="$(env HOME)/navigation_eval_results"/>
+  <arg name="experiment_name" default="exp01"/>
+  <arg name="robot_radius" default="0.25"/>
+  <arg name="collision_margin" default="0.02"/>
+  <arg name="goal_tolerance" default="0.1"/>
+  <arg name="max_navigation_time" default="300.0"/>
+  <arg name="eval_log_rate_hz" default="10.0"/>
+
+  <arg name="enable_eval_logging" default="true"/>
+
+
+  <!-- LAUNCH GAZEBO  -->
+  <include file="$(find gazebo_ros)/launch/empty_world.launch">
+    <arg name="world_name" value="$(find surenaV_gazebo)/worlds/factory.world"/>
+    <arg name="debug" value="$(arg debug)" />
+    <arg name="gui" value="$(arg gui)" />
+    <arg name="paused" value="$(arg paused)"/>
+    <arg name="use_sim_time" value="$(arg use_sim_time)"/>
+    <arg name="headless" value="$(arg headless)"/>
+  </include>
+
+
+  <node pkg="tf" type="static_transform_publisher"
+      name="odom_to_world"
+      args="0 0 0 0 0 0 odom world 100" />
+
+
+  <!-- LOAD THE URDF TO THE PARAMETER SERVER -->
+  <param name="robot_description"
+    command="$(find xacro)/xacro '$(find surenaV_description)/urdf/surenaV.urdf'" />
+
+  <!-- SPAWN THE ROBOT IN GAZEBO -->      
+
+  <node name="urdf_spawner" pkg="gazebo_ros" type="spawn_model" respawn="false" output="screen"
+    args="-urdf -model surenaV -param robot_description
+            -x -5.0
+            -y 0.0
+            -z 0.0
+            -Y 0"/>
+
+
+ 
+
+ 
+ 
+  <node name="spawn_person_1" pkg="gazebo_ros" type="spawn_model"
+        args="-file $(find surenaV_gazebo)/models/human_actor/model.sdf -sdf -model person_1 -x 2 -y 1.2 -z 0.0"/> 
+
+  <node name="spawn_person_2" pkg="gazebo_ros" type="spawn_model"
+        args="-file $(find surenaV_gazebo)/models/human_actor/model.sdf -sdf -model person_2 -x 5.0 -y -3 -z 0.0"/>
+
+  <node name="spawn_person_3" pkg="gazebo_ros" type="spawn_model"
+        args="-file $(find surenaV_gazebo)/models/human_actor/model.sdf -sdf -model person_3 -x 1.5 -y -2.0 -z 0.0"/>  
+
+
+
+
+  
+  <!-- Static obstacle extractor + marker publisher -->
+  <node pkg="social_mpc_planner"
+        type="gazebo_static_obstacle_node.py"
+        name="gazebo_static_obstacle_node"
+        output="screen">
+
+      <param name="use_yaml" value="true"/>
+
+      <param name="obstacle_prefix" value="obstacle_"/>
+      <param name="obstacle_radius" value="0.2"/>
+
+      <param name="yaml_file"
+             value="$(find social_mpc_planner)/config/static_obstacles_factory.yaml"/>
+ 
+      <param name="frame_id" value="odom"/>
+
+  </node>
+
+  <!-- Scripted multi-human motion: each human moves between A(ax,ay) and B(bx,by). -->
+  <node name="scripted_multi_human_motion_node"
+        pkg="social_mpc_planner"
+        type="scripted_human_motion_node.py"
+        output="screen">
+    <param name="prediction_dt" value="0.5"/>
+    <param name="prediction_horizon" value="12"/>
+    <param name="person_radius" value="0.25"/>
+    <param name="z" value="0.0"/>
+    <param name="rate" value="20.0"/>
+    <param name="use_learned_prediction" value="true"/>
+    <param name="social_stgcnn_path"
+       value="/home/mozayyan/Social_STGCNN/Social-STGCNN"/>
+
+    <param name="checkpoint_path"
+            value="/home/mozayyan/Social_STGCNN/Social-STGCNN/checkpoint/social-stgcnn-zara2/val_best.pth"/>
+
+    <param name="obs_len" value="8"/>
+    <param name="model_pred_len" value="12"/>
+    <param name="device" value="cpu"/>
+
+    <rosparam param="humans">
+      - {id: 1, model_name: person_1, ax: 2.0,  ay: 1.5,  bx: 2.0, by: -10.0,  speed: 0.025, radius: 0.3, yaw_offset: 1.5708}
+      - {id: 2, model_name: person_2, ax: 5.5,  ay: -3.0,  bx: 5.5, by: 10.0, speed: 0.05, radius: 0.3, yaw_offset: 1.5708}
+      - {id: 3, model_name: person_3, ax: 1.5,  ay: -0.5,  bx: 10.0, by: 6.0,  speed: 0.04, radius: 0.3, yaw_offset: 1.5708}
+      <!-- - {id: 4, model_name: person_4, ax: 4.5,  ay: 2.0,  bx: 4.0,  by: -15.0, speed: 0.03, radius: 0.25, yaw_offset: 1.5708}
+      - {id: 5, model_name: person_5, ax: 0.0, ay: -2.4, bx: 15.0, by: -2.0,  speed: 0.045, radius: 0.25, yaw_offset: 1.5708} -->
+    </rosparam>
+  </node>
+
+
+  <!-- Robot Manager -->
+  <node name="robot_manager_node"
+        pkg="robot_manager"
+        type="robot_manager_node"
+        output="screen"/>
+
+  <!-- MPC planner -->
+  <node name="mpc_planner_node"
+        pkg="social_mpc_planner"
+        type="footstep_mpc_planner_node.py"
+        output="screen"/>
+     <param name="max_static_obstacles" value="15"/>
+     <param name="obstacle_selection_radius" value="5.0"/>
+
+
+  <!-- Odom TF publisher -->
+  <node pkg="social_mpc_planner"
+      type="gazebo_odom_publisher.py"
+      name="gazebo_odom_publisher"
+      output="screen">
+  <param name="robot_name" value="surenaV"/>
+  </node>
+
+  <!-- Navigation evaluation logger -->
+  <node name="navigation_experiment_logger_node"
+        pkg="social_mpc_planner"
+        type="experiment_logger_node.py"
+        output="screen"
+        if="$(arg enable_eval_logging)">
+    <param name="output_root" value="$(arg eval_output_root)"/>
+    <param name="experiment_name" value="$(arg experiment_name)"/>
+    <param name="robot_radius" value="$(arg robot_radius)"/>
+    <param name="collision_margin" value="$(arg collision_margin)"/>
+    <param name="goal_tolerance" value="$(arg goal_tolerance)"/>
+    <param name="max_navigation_time" value="$(arg max_navigation_time)"/>
+    <param name="log_rate_hz" value="$(arg eval_log_rate_hz)"/>
+  </node>
+
+  <!-- Map publisher -->
+  <arg name="map_file" default="/home/mozayyan/Surena_ws/src/surenaV_core/simulation/surenaV_gazebo/map/map_6.yaml"/>
+  <node pkg="map_server" type="map_server" name="map_server" args="$(arg map_file)" />
+
+  <!-- RViz -->
+  <node name="rviz"
+        pkg="rviz"
+        type="rviz"
+        args="-d $(find surenaV_gazebo)/rviz/social_mpc.rviz"
+        output="screen"
+        if="$(arg gui)" />
+
+  <!-- LAUNCH THE CONTROLLERS AND THE BRIDGE NODE -->
+  <!-- This will load the controller configurations, spawn them, and start the bridge node -->
+  <include file="$(find surenaV_gazebo)/launch/surenaV_control.launch" />
+
+</launch>

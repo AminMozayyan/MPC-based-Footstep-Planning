@@ -144,12 +144,21 @@
 
   
   <!-- Static obstacle extractor + marker publisher -->
-  <node name="gazebo_static_obstacle_node"
-        pkg="social_mpc_planner"
+  <node pkg="social_mpc_planner"
         type="gazebo_static_obstacle_node.py"
+        name="gazebo_static_obstacle_node"
         output="screen">
-    <param name="obstacle_prefix" value="obstacle_"/>
-    <param name="obstacle_radius" value="0.2"/>
+
+      <param name="use_yaml" value="false"/>
+
+      <param name="obstacle_prefix" value="obstacle_"/>
+      <param name="obstacle_radius" value="0.2"/>
+
+      <param name="yaml_file"
+             value="$(find social_mpc_planner)/config/static_obstacles_factory.yaml"/>
+ 
+      <param name="frame_id" value="odom"/>
+
   </node>
 
   <!-- Scripted multi-human motion: each human moves between A(ax,ay) and B(bx,by). -->
@@ -194,6 +203,9 @@
         pkg="social_mpc_planner"
         type="footstep_mpc_planner_node.py"
         output="screen"/>
+    <param name="max_static_obstacles" value="15"/>
+    <param name="obstacle_selection_radius" value="5.0"/>
+
 
   <!-- Odom TF publisher -->
   <node pkg="social_mpc_planner"
