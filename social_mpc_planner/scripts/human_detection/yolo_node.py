@@ -7,6 +7,7 @@ import numpy as np
 import tf2_ros
 import tf2_geometry_msgs
 import math
+import time
 
 from geometry_msgs.msg import PointStamped
 from sensor_msgs.msg import Image, CameraInfo
@@ -15,6 +16,7 @@ from ultralytics import YOLO
 from gazebo_msgs.msg import ModelStates
 from tf.transformations import euler_from_quaternion
 from social_mpc_planner.msg import Human, HumanArray
+from std_msgs.msg import Float32, Int32
 
 
 class HumanTrackerDepthNode:
@@ -24,10 +26,20 @@ class HumanTrackerDepthNode:
         rospy.init_node("human_tracker_depth_node")
 
         self.bridge = CvBridge()
-        self.model = YOLO("yolov8n.pt")
+        self.yolo_model_path = rospy.get_param("~yolo_model_path", "yolov8n.pt")
+        self.model = YOLO(self.yolo_model_path)
+        self.conf_threshold = float(rospy.get_param("~confidence_threshold", 0.5))
 
         self.rgb_frame = None
         self.depth_frame = None
+        self.rgb_stamp = None
+        self.depth_stamp = None
+        self.last_rgb_msg_time = None
+        self.last_depth_msg_time = None
+        self.last_detection_pub_time = None
+        self.last_gazebo_pub_time = None
+        self.detection_loop_rate_hz = float(rospy.get_param("~detection_loop_rate_hz", 10.0))
+
 
         self.tf_buffer = tf2_ros.Buffer()
         self.tf_listener = tf2_ros.TransformListener(self.tf_buffer)
@@ -54,14 +66,18 @@ class HumanTrackerDepthNode:
             ["person", "human", "actor"]
         )
 
+        self.detected_humans_topic = rospy.get_param("~detected_humans_topic", "/detected_humans_world")
+        self.gazebo_humans_topic = rospy.get_param("~gazebo_humans_topic", "/gazebo_humans_world")
+        self.robot_pose_topic = rospy.get_param("~robot_pose_topic", "/robot_pose_world")
+
         self.detected_human_pub = rospy.Publisher(
-            "/detected_humans_world",
+            self.detected_humans_topic,
             HumanArray,
             queue_size=10
         )
 
         self.gazebo_human_pub = rospy.Publisher(
-            "/gazebo_humans_world",
+            self.gazebo_humans_topic,
             HumanArray,
             queue_size=10
         )
@@ -70,10 +86,19 @@ class HumanTrackerDepthNode:
         # humans[0].id = 0, humans[0].x = robot_x, humans[0].y = robot_y
         # header.frame_id = "world"
         self.robot_pose_pub = rospy.Publisher(
-            "/robot_pose_world",
+            self.robot_pose_topic,
             HumanArray,
             queue_size=10
         )
+
+        # Timing / frequency diagnostics for integration analysis.
+        self.rgb_rate_pub = rospy.Publisher("/evaluation/camera_rgb_rate_hz", Float32, queue_size=10)
+        self.depth_rate_pub = rospy.Publisher("/evaluation/camera_depth_rate_hz", Float32, queue_size=10)
+        self.detection_processing_time_pub = rospy.Publisher("/evaluation/detection_processing_time", Float32, queue_size=10)
+        self.detection_total_cycle_time_pub = rospy.Publisher("/evaluation/detection_total_cycle_time", Float32, queue_size=10)
+        self.detection_publish_rate_pub = rospy.Publisher("/evaluation/detection_publish_rate_hz", Float32, queue_size=10)
+        self.detection_num_humans_pub = rospy.Publisher("/evaluation/detection_num_humans", Int32, queue_size=10)
+        self.gazebo_humans_publish_rate_pub = rospy.Publisher("/evaluation/gazebo_humans_publish_rate_hz", Float32, queue_size=10)
 
         rospy.Subscriber(
             "/gazebo/model_states",
@@ -87,11 +112,15 @@ class HumanTrackerDepthNode:
         self.cx0 = None
         self.cy0 = None
 
-        rospy.Subscriber("/camera/image_raw", Image, self.rgb_callback, queue_size=1)
-        rospy.Subscriber("/camera/depth/image_raw", Image, self.depth_callback, queue_size=1)
-        rospy.Subscriber("/camera/camera_info", CameraInfo, self.camera_info_callback, queue_size=1)
+        self.rgb_topic = rospy.get_param("~rgb_topic", "/camera/image_raw")
+        self.depth_topic = rospy.get_param("~depth_topic", "/camera/depth/image_raw")
+        self.camera_info_topic = rospy.get_param("~camera_info_topic", "/camera/camera_info")
 
-        rospy.loginfo("Human BEV Tracker Started")
+        rospy.Subscriber(self.rgb_topic, Image, self.rgb_callback, queue_size=1)
+        rospy.Subscriber(self.depth_topic, Image, self.depth_callback, queue_size=1)
+        rospy.Subscriber(self.camera_info_topic, CameraInfo, self.camera_info_callback, queue_size=1)
+
+        rospy.loginfo("Human BEV Tracker Started | detected_topic=%s | gazebo_topic=%s", self.detected_humans_topic, self.gazebo_humans_topic)
 
     def publish_robot_pose(self):
         if self.robot_x is None or self.robot_y is None:
@@ -154,10 +183,27 @@ class HumanTrackerDepthNode:
         self.cx0 = K[2]
         self.cy0 = K[5]
 
+    def _publish_rate_from_interval(self, publisher, current_time, last_time):
+        if last_time is not None:
+            dt = (current_time - last_time).to_sec()
+            if dt > 1e-6:
+                publisher.publish(Float32(1.0 / dt))
+        return current_time
+
     def rgb_callback(self, msg):
+        now = rospy.Time.now()
+        self.last_rgb_msg_time = self._publish_rate_from_interval(
+            self.rgb_rate_pub, now, self.last_rgb_msg_time
+        )
+        self.rgb_stamp = msg.header.stamp if hasattr(msg, "header") else now
         self.rgb_frame = self.bridge.imgmsg_to_cv2(msg, "bgr8")
 
     def depth_callback(self, msg):
+        now = rospy.Time.now()
+        self.last_depth_msg_time = self._publish_rate_from_interval(
+            self.depth_rate_pub, now, self.last_depth_msg_time
+        )
+        self.depth_stamp = msg.header.stamp if hasattr(msg, "header") else now
         self.depth_frame = self.bridge.imgmsg_to_cv2(msg, "passthrough")
 
     def get_depth(self, cx, cy):
@@ -284,6 +330,10 @@ class HumanTrackerDepthNode:
             gazebo_msg.humans.append(human)
 
         self.gazebo_human_pub.publish(gazebo_msg)
+        now_pub = rospy.Time.now()
+        self.last_gazebo_pub_time = self._publish_rate_from_interval(
+            self.gazebo_humans_publish_rate_pub, now_pub, self.last_gazebo_pub_time
+        )
 
     def base_to_world(self, x_base, y_base):
 
@@ -300,7 +350,7 @@ class HumanTrackerDepthNode:
 
     def run(self):
 
-        rate = rospy.Rate(10)
+        rate = rospy.Rate(self.detection_loop_rate_hz)
 
         while not rospy.is_shutdown():
 
@@ -308,14 +358,17 @@ class HumanTrackerDepthNode:
                 rate.sleep()
                 continue
 
+            cycle_wall_t0 = time.time()
             frame = self.rgb_frame.copy()
 
+            yolo_wall_t0 = time.time()
             results = self.model.track(
                 frame,
                 persist=True,
                 classes=[0],
                 verbose=False
             )[0]
+            yolo_processing_time = time.time() - yolo_wall_t0
 
             detected_msg = HumanArray()
             detected_msg.header.stamp = rospy.Time.now()
@@ -326,7 +379,7 @@ class HumanTrackerDepthNode:
                 for box in results.boxes:
 
                     conf = float(box.conf[0])
-                    if conf < 0.5:
+                    if conf < self.conf_threshold:
                         continue
 
                     track_id = int(box.id[0]) if box.id is not None else -1
@@ -388,6 +441,14 @@ class HumanTrackerDepthNode:
                     )
 
             self.detected_human_pub.publish(detected_msg)
+
+            now_pub = rospy.Time.now()
+            self.last_detection_pub_time = self._publish_rate_from_interval(
+                self.detection_publish_rate_pub, now_pub, self.last_detection_pub_time
+            )
+            self.detection_processing_time_pub.publish(Float32(float(yolo_processing_time)))
+            self.detection_total_cycle_time_pub.publish(Float32(float(time.time() - cycle_wall_t0)))
+            self.detection_num_humans_pub.publish(Int32(len(detected_msg.humans)))
 
             cv2.imshow("Human BEV Tracker", frame)
             cv2.waitKey(1)

@@ -159,11 +159,11 @@ class GazeboStaticObstacleNode:
 
         self.publish_obstacles_and_markers(out)
 
-        rospy.loginfo_throttle(
-            5.0,
-            "Published %d YAML static obstacles on /static_obstacles",
-            len(out.obstacles)
-        )
+        # rospy.loginfo_throttle(
+        #     5.0,
+        #     "Published %d YAML static obstacles on /static_obstacles",
+        #     len(out.obstacles)
+        # )
 
     # -------------------------------------------------------------------------
     # Gazebo model_states mode, kept for old tests with obstacle_ models

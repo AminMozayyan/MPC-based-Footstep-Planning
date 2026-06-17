@@ -77,7 +77,7 @@
 
 <model name="shelf1">
   <include><uri>model://aws_robomaker_warehouse_ShelfE_01</uri></include>
-  <pose>3.8 3.8 0 0 0 1.57</pose>
+  <pose>3.8 3.8 0 0 0 0.0</pose>
 </model>
 
 <model name="shelf3">
@@ -108,7 +108,7 @@
 
 <model name="bucket1">
   <include><uri>model://aws_robomaker_warehouse_Bucket_01</uri></include>
-  <pose>2 -6 0 0 0 0</pose>
+  <pose>1 1 0 0 0 0</pose>
 </model>
 
 <model name="trash1">

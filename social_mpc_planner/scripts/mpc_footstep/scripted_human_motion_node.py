@@ -6,20 +6,24 @@ import sys
 import math
 import copy
 import importlib
+import time
 from collections import deque
 
 import numpy as np
 import rospy
 from gazebo_msgs.msg import ModelState
 from gazebo_msgs.srv import SetModelState
-from visualization_msgs.msg import Marker
-from geometry_msgs.msg import Pose2D
+from visualization_msgs.msg import Marker, MarkerArray
+from geometry_msgs.msg import Pose2D, Point
 from social_mpc_planner.msg import (
     PredictedPerson,
     PredictedPeople,
     PredictedPersonUncertainty,
-    PredictedPeopleUncertainty
+    PredictedPeopleUncertainty,
+    HumanArray,
+    Human
 )
+from std_msgs.msg import Float32, Int32
 
 
 class ScriptedHuman:
@@ -387,6 +391,19 @@ class ScriptedMultiHumanMotionNode:
         self.rate_hz = float(rospy.get_param("~rate", 20.0))
         self.publish_before_history_full = bool(rospy.get_param("~publish_before_history_full", True))
 
+        # Select where the observation history for prediction comes from.
+        #   gt              : use the internally scripted Gazebo humans (old behavior)
+        #   detection       : use /detected_humans_world published by yolo_node
+        #   gazebo_topic    : use /gazebo_humans_world published by yolo_node
+        self.human_source = str(rospy.get_param("~human_source", "gt")).lower()
+        self.detected_humans_topic = rospy.get_param("~detected_humans_topic", "/detected_humans_world")
+        self.gazebo_humans_topic = rospy.get_param("~gazebo_humans_topic", "/gazebo_humans_world")
+        self.gt_humans_topic = rospy.get_param("~gt_humans_topic", self.gazebo_humans_topic)
+        self.detected_marker_topic = rospy.get_param("~detected_marker_topic", "/human_detected_marker")
+        self.gt_marker_topic = rospy.get_param("~gt_marker_topic", "/human_gt_marker")
+        self.external_human_timeout = float(rospy.get_param("~external_human_timeout", 0.7))
+        self.move_scripted_humans = bool(rospy.get_param("~move_scripted_humans", True))
+
         humans_cfg = rospy.get_param("~humans", [])
         if not humans_cfg:
             humans_cfg = [{
@@ -402,56 +419,257 @@ class ScriptedMultiHumanMotionNode:
             }]
 
         self.humans = [ScriptedHuman(cfg, self.default_radius, self.default_z) for cfg in humans_cfg]
+        self.humans_by_id = {int(h.id): h for h in self.humans}
         self.predictor = SocialSTGCNNPredictor()
 
         self.history = deque(maxlen=self.predictor.obs_len)
         self.last_history_stamp = None
+        self.active_people = []
+        self.active_ids = []
+
+        # External source used only when human_source='gazebo_topic'.
+        # Detection data is stored separately because we want to visualize it in RViz
+        # even when the predictor/MPC uses internal GT.
+        self.external_humans = {}
+        self.external_humans_stamp = None
+        self.external_sub = None
+        self.last_external_input_time = None
+        self.last_detected_input_time = None
+        self.last_gt_publish_time = None
+        self.last_prediction_publish_time = None
+
+        self.detected_humans = {}
+        self.detected_humans_stamp = None
+        self.detected_sub = rospy.Subscriber(
+            self.detected_humans_topic,
+            HumanArray,
+            self.detected_humans_callback,
+            queue_size=1
+        )
+        rospy.loginfo("Detection marker source subscribed: %s", self.detected_humans_topic)
+
+        if self.human_source == "detection":
+            # Do not create a second subscriber to the same topic.
+            # _current_people() will read self.detected_humans for prediction/MPC,
+            # while publish_detected_markers() uses the same data for RViz.
+            rospy.loginfo("Human prediction source: detection topic %s", self.detected_humans_topic)
+
+        elif self.human_source in ["gazebo_topic", "gt_topic"]:
+            self.human_source = "gazebo_topic"
+            self.external_sub = rospy.Subscriber(
+                self.gazebo_humans_topic,
+                HumanArray,
+                self.external_humans_callback,
+                queue_size=1
+            )
+            rospy.loginfo("Human prediction source: Gazebo HumanArray topic %s", self.gazebo_humans_topic)
+
+        elif self.human_source == "gt":
+            rospy.loginfo("Human prediction source: internal scripted GT")
+        else:
+            rospy.logwarn("Unknown ~human_source='%s'. Falling back to 'gt'.", self.human_source)
+            self.human_source = "gt"
 
         self.pred_pub = rospy.Publisher("/predicted_people", PredictedPeople, queue_size=10)
         self.unc_pub = rospy.Publisher("/predicted_people_uncertainty", PredictedPeopleUncertainty, queue_size=10)
+
+        # Timing / frequency diagnostics for integration analysis.
+        self.prediction_processing_time_pub = rospy.Publisher("/evaluation/prediction_processing_time", Float32, queue_size=10)
+        self.prediction_total_cycle_time_pub = rospy.Publisher("/evaluation/prediction_total_cycle_time", Float32, queue_size=10)
+        self.prediction_publish_rate_pub = rospy.Publisher("/evaluation/prediction_publish_rate_hz", Float32, queue_size=10)
+        self.prediction_input_rate_pub = rospy.Publisher("/evaluation/prediction_input_rate_hz", Float32, queue_size=10)
+        self.prediction_history_size_pub = rospy.Publisher("/evaluation/prediction_history_size", Int32, queue_size=10)
+        self.prediction_num_people_pub = rospy.Publisher("/evaluation/prediction_num_people", Int32, queue_size=10)
+        self.gt_humans_publish_rate_pub = rospy.Publisher("/evaluation/gt_humans_publish_rate_hz", Float32, queue_size=10)
+
+        # Always publish raw GT HumanArray so the logger and other nodes can save it,
+        # even when the planner is configured to use detections.
+        self.gt_humans_pub = rospy.Publisher(self.gt_humans_topic, HumanArray, queue_size=10)
+
+        # Source-based markers: these are the human positions actually used for prediction/MPC.
         self.marker_pub = rospy.Publisher("/human_obstacle_marker", Marker, queue_size=10)
 
-        rospy.wait_for_service("/gazebo/set_model_state")
-        self.set_state = rospy.ServiceProxy("/gazebo/set_model_state", SetModelState)
+        # Always publish internal scripted GT and detected markers separately for RViz comparison.
+        self.gt_marker_pub = rospy.Publisher(self.gt_marker_topic, Marker, queue_size=10)
+        self.detected_marker_pub = rospy.Publisher(self.detected_marker_topic, Marker, queue_size=10)
+
+        # Predicted future human trajectories for RViz visualization.
+        # These are generated from the same PredictedPeople message published to the MPC.
+        self.pred_marker_pub = rospy.Publisher("/predicted_people_marker", MarkerArray, queue_size=10)
+        self.pred_marker_stride = int(rospy.get_param("~prediction_marker_stride", 1))
+        self.pred_marker_z = float(rospy.get_param("~prediction_marker_z", 0.08))
+
+        self.set_state = None
+        if self.move_scripted_humans:
+            rospy.wait_for_service("/gazebo/set_model_state")
+            self.set_state = rospy.ServiceProxy("/gazebo/set_model_state", SetModelState)
 
         self.rate = rospy.Rate(self.rate_hz)
-        rospy.loginfo("scripted multi-human motion started with %d humans", len(self.humans))
+        rospy.loginfo(
+            "scripted multi-human prediction node started | scripted_humans=%d | source=%s",
+            len(self.humans),
+            self.human_source
+        )
 
-    def _current_positions(self):
-        return np.asarray([[h.x, h.y] for h in self.humans], dtype=np.float32)
-    
-    def build_uncertainty_message(self, sigma_x, sigma_y, rho):
-        msg = PredictedPeopleUncertainty()
-        msg.header.stamp = rospy.Time.now()
-        msg.header.frame_id = self.prediction_frame
-        msg.dt = self.dt_pred
-        msg.horizon = sigma_x.shape[0] - 1
+    def _parse_human_array_msg(self, msg):
+        humans = {}
+        for h in msg.humans:
+            hid = int(h.id)
+            if hid < 0:
+                continue
 
-        for i, human in enumerate(self.humans):
-            p = PredictedPersonUncertainty()
-            p.id = human.id
-            p.sigma_x = [float(v) for v in sigma_x[:, i]]
-            p.sigma_y = [float(v) for v in sigma_y[:, i]]
-            p.rho = [float(v) for v in rho[:, i]]
-            msg.people.append(p)
+            radius = self.default_radius
+            if hasattr(h, "radius"):
+                try:
+                    if float(h.radius) > 0.0:
+                        radius = float(h.radius)
+                except Exception:
+                    radius = self.default_radius
 
-        return msg
+            humans[hid] = {
+                "id": hid,
+                "x": float(h.x),
+                "y": float(h.y),
+                "radius": float(radius),
+            }
+
+        return humans
+
+
+    def _publish_rate_from_interval(self, publisher, current_time, last_time):
+        if last_time is not None:
+            dt = (current_time - last_time).to_sec()
+            if dt > 1e-6:
+                publisher.publish(Float32(1.0 / dt))
+        return current_time
+
+    def external_humans_callback(self, msg):
+        now = rospy.Time.now()
+        self.last_external_input_time = self._publish_rate_from_interval(
+            self.prediction_input_rate_pub, now, self.last_external_input_time
+        )
+        self.external_humans = self._parse_human_array_msg(msg)
+        self.external_humans_stamp = now
+
+    def detected_humans_callback(self, msg):
+        # This callback is always active, independent of human_source.
+        # Therefore RViz can show detections even when prediction/MPC uses GT.
+        now = rospy.Time.now()
+        self.last_detected_input_time = self._publish_rate_from_interval(
+            self.prediction_input_rate_pub, now, self.last_detected_input_time
+        )
+        self.detected_humans = self._parse_human_array_msg(msg)
+        self.detected_humans_stamp = now
+
+    def _current_people(self):
+        if self.human_source == "gt":
+            return [
+                {"id": int(h.id), "x": float(h.x), "y": float(h.y), "radius": float(h.radius)}
+                for h in self.humans
+            ]
+
+        if self.human_source == "detection":
+            if self.detected_humans_stamp is None:
+                rospy.logwarn_throttle(1.0, "Waiting for detected human data from topic '%s'.", self.detected_humans_topic)
+                return None
+
+            age = (rospy.Time.now() - self.detected_humans_stamp).to_sec()
+            if age > self.external_human_timeout:
+                rospy.logwarn_throttle(
+                    1.0,
+                    "Detected human data timeout. age=%.2f sec",
+                    age
+                )
+                return None
+
+            if len(self.detected_humans) == 0:
+                rospy.logwarn_throttle(1.0, "Detected human topic currently has no humans.")
+                return None
+
+            return [self.detected_humans[k] for k in sorted(self.detected_humans.keys())]
+
+        if self.external_humans_stamp is None:
+            rospy.logwarn_throttle(1.0, "Waiting for external human data from source='%s'.", self.human_source)
+            return None
+
+        age = (rospy.Time.now() - self.external_humans_stamp).to_sec()
+        if age > self.external_human_timeout:
+            rospy.logwarn_throttle(
+                1.0,
+                "External human data timeout for source='%s'. age=%.2f sec",
+                self.human_source,
+                age
+            )
+            return None
+
+        if len(self.external_humans) == 0:
+            rospy.logwarn_throttle(1.0, "External human source='%s' currently has no humans.", self.human_source)
+            return None
+
+        return [self.external_humans[k] for k in sorted(self.external_humans.keys())]
+
+    def _positions_from_people(self, people):
+        return np.asarray([[p["x"], p["y"]] for p in people], dtype=np.float32)
 
     def _update_history(self, now):
+        people = self._current_people()
+        if people is None or len(people) == 0:
+            return False
+
+        ids = [int(p["id"]) for p in people]
+
+        # Social-STGCNN expects a fixed set and order of people over the observation window.
+        # If detection IDs appear/disappear or change order, restart the history safely.
+        if self.active_ids and ids != self.active_ids:
+            rospy.logwarn_throttle(
+                1.0,
+                "Human IDs changed from %s to %s. Clearing prediction history.",
+                str(self.active_ids),
+                str(ids)
+            )
+            self.history.clear()
+            self.last_history_stamp = None
+
+        current_positions = self._positions_from_people(people)
+        self.active_people = people
+        self.active_ids = ids
+
         if self.last_history_stamp is None:
-            self.history.append(self._current_positions())
+            self.history.append(current_positions)
             self.last_history_stamp = now
-            return
+            return True
 
         if (now - self.last_history_stamp).to_sec() >= self.dt_pred:
-            self.history.append(self._current_positions())
+            self.history.append(current_positions)
             self.last_history_stamp = now
+            return True
+
+        return True
+
+    def _constant_velocity_prediction_from_history(self, people):
+        num_people = len(people)
+        out = np.zeros((self.n_pred + 1, num_people, 2), dtype=np.float32)
+
+        if len(self.history) > 0:
+            out[0] = self.history[-1]
+        else:
+            out[0] = self._positions_from_people(people)
+
+        if len(self.history) >= 2:
+            v = self.history[-1] - self.history[-2]
+        else:
+            v = np.zeros((num_people, 2), dtype=np.float32)
+
+        for k in range(1, self.n_pred + 1):
+            out[k] = out[k - 1] + v
+
+        return out
 
     def _build_person_msg(self, human_index, pred_xy):
-        human = self.humans[human_index]
+        person_info = self.active_people[human_index]
         person = PredictedPerson()
-        person.id = human.id
-        person.radius = human.radius
+        person.id = int(person_info["id"])
+        person.radius = float(person_info.get("radius", self.default_radius))
 
         for k in range(pred_xy.shape[0]):
             pose = Pose2D()
@@ -472,6 +690,296 @@ class ScriptedMultiHumanMotionNode:
 
         return person
 
+    def build_uncertainty_message(self, sigma_x, sigma_y, rho):
+        msg = PredictedPeopleUncertainty()
+        msg.header.stamp = rospy.Time.now()
+        msg.header.frame_id = self.prediction_frame
+        msg.dt = self.dt_pred
+        msg.horizon = sigma_x.shape[0] - 1
+
+        for i, person_info in enumerate(self.active_people):
+            p = PredictedPersonUncertainty()
+            p.id = int(person_info["id"])
+            p.sigma_x = [float(v) for v in sigma_x[:, i]]
+            p.sigma_y = [float(v) for v in sigma_y[:, i]]
+            p.rho = [float(v) for v in rho[:, i]]
+            msg.people.append(p)
+
+        return msg
+
+    def _build_prediction_message_from_xy(self, pred_xy):
+        out = PredictedPeople()
+        out.header.stamp = rospy.Time.now()
+        out.header.frame_id = self.prediction_frame
+        out.dt = self.dt_pred
+        out.horizon = self.n_pred
+
+        for i in range(len(self.active_people)):
+            out.people.append(self._build_person_msg(i, pred_xy))
+
+        return out
+
+    def _marker_color_for_source(self):
+        """Return RGB color for the currently selected human source."""
+        if self.human_source == "gt":
+            # Cyan: internal scripted ground truth
+            return 0.0, 1.0, 1.0
+        if self.human_source == "detection":
+            # Blue: camera / YOLO detections
+            return 0.0, 0.2, 1.0
+        if self.human_source == "gazebo_topic":
+            # Green: Gazebo GT received from topic
+            return 0.0, 1.0, 0.0
+        return 1.0, 1.0, 1.0
+
+    def build_gt_human_array(self):
+        msg = HumanArray()
+        if hasattr(msg, "header"):
+            msg.header.stamp = rospy.Time.now()
+            msg.header.frame_id = self.prediction_frame
+
+        for human in self.humans:
+            hmsg = Human()
+            hmsg.id = int(human.id)
+            hmsg.x = float(human.x)
+            hmsg.y = float(human.y)
+            if hasattr(hmsg, "radius"):
+                hmsg.radius = float(human.radius)
+            msg.humans.append(hmsg)
+        return msg
+
+    def publish_gt_human_array(self):
+        self.gt_humans_pub.publish(self.build_gt_human_array())
+        now_pub = rospy.Time.now()
+        self.last_gt_publish_time = self._publish_rate_from_interval(
+            self.gt_humans_publish_rate_pub, now_pub, self.last_gt_publish_time
+        )
+
+    def publish_detected_markers(self):
+        """Publish latest detected HumanArray positions as separate RViz markers."""
+        delete_marker = Marker()
+        delete_marker.header.frame_id = self.marker_frame
+        delete_marker.header.stamp = rospy.Time.now()
+        delete_marker.ns = "detected_humans"
+        delete_marker.id = 0
+        delete_marker.action = Marker.DELETEALL
+        self.detected_marker_pub.publish(delete_marker)
+
+        if self.detected_humans_stamp is None or len(self.detected_humans) == 0:
+            return
+
+        if (rospy.Time.now() - self.detected_humans_stamp).to_sec() > self.external_human_timeout:
+            return
+
+        now = rospy.Time.now()
+        for i, person in enumerate(self.detected_humans.values()):
+            marker = Marker()
+            marker.header.frame_id = self.marker_frame
+            marker.header.stamp = now
+            marker.ns = "detected_humans"
+            marker.id = int(person.get("id", i))
+            marker.type = Marker.CYLINDER
+            marker.action = Marker.ADD
+            marker.pose.position.x = float(person["x"])
+            marker.pose.position.y = float(person["y"])
+            marker.pose.position.z = 0.55
+            marker.pose.orientation.w = 1.0
+            radius = float(person.get("radius", self.default_radius))
+            marker.scale.x = 2.0 * radius
+            marker.scale.y = 2.0 * radius
+            marker.scale.z = 1.0
+            marker.color.r = 0.0
+            marker.color.g = 0.2
+            marker.color.b = 1.0
+            marker.color.a = 0.60
+            self.detected_marker_pub.publish(marker)
+
+    def publish_source_markers(self):
+        """
+        Publish RViz markers from the same source used for prediction.
+
+        This avoids showing internal GT cylinders while the planner is actually
+        using camera detections. The topic remains /human_obstacle_marker for
+        compatibility with the existing RViz configuration.
+        """
+        # First clear old markers so disappeared detections do not remain in RViz.
+        delete_marker = Marker()
+        delete_marker.header.frame_id = self.marker_frame
+        delete_marker.header.stamp = rospy.Time.now()
+        delete_marker.ns = "selected_human_source"
+        delete_marker.id = 0
+        delete_marker.action = Marker.DELETEALL
+        self.marker_pub.publish(delete_marker)
+
+        if len(self.active_people) == 0:
+            return
+
+        r_col, g_col, b_col = self._marker_color_for_source()
+        now = rospy.Time.now()
+
+        for i, person in enumerate(self.active_people):
+            marker = Marker()
+            marker.header.frame_id = self.marker_frame
+            marker.header.stamp = now
+            marker.ns = "selected_human_source"
+            marker.id = int(person.get("id", i))
+            marker.type = Marker.CYLINDER
+            marker.action = Marker.ADD
+
+            marker.pose.position.x = float(person["x"])
+            marker.pose.position.y = float(person["y"])
+            marker.pose.position.z = 0.5
+            marker.pose.orientation.w = 1.0
+
+            radius = float(person.get("radius", self.default_radius))
+            marker.scale.x = 2.0 * radius
+            marker.scale.y = 2.0 * radius
+            marker.scale.z = 1.0
+
+            marker.color.r = r_col
+            marker.color.g = g_col
+            marker.color.b = b_col
+            marker.color.a = 0.85
+
+            self.marker_pub.publish(marker)
+
+    def publish_gt_markers(self):
+        """
+        Always publish internal scripted GT human markers on /human_gt_marker.
+
+        These markers are independent of human_source. Therefore, when
+        human_source='detection', RViz can show both:
+          - /human_obstacle_marker : detections used by MPC
+          - /human_gt_marker       : true scripted/Gazebo human positions
+        """
+        delete_marker = Marker()
+        delete_marker.header.frame_id = self.marker_frame
+        delete_marker.header.stamp = rospy.Time.now()
+        delete_marker.ns = "gt_humans"
+        delete_marker.id = 0
+        delete_marker.action = Marker.DELETEALL
+        self.gt_marker_pub.publish(delete_marker)
+
+        now = rospy.Time.now()
+
+        for human in self.humans:
+            marker = Marker()
+            marker.header.frame_id = self.marker_frame
+            marker.header.stamp = now
+            marker.ns = "gt_humans"
+            marker.id = int(human.id)
+            marker.type = Marker.CYLINDER
+            marker.action = Marker.ADD
+
+            marker.pose.position.x = float(human.x)
+            marker.pose.position.y = float(human.y)
+            marker.pose.position.z = 0.5
+            marker.pose.orientation.w = 1.0
+
+            marker.scale.x = 2.0 * float(human.radius)
+            marker.scale.y = 2.0 * float(human.radius)
+            marker.scale.z = 1.0
+
+            # Green GT markers.
+            marker.color.r = 0.0
+            marker.color.g = 1.0
+            marker.color.b = 0.0
+            marker.color.a = 0.55
+
+            self.gt_marker_pub.publish(marker)
+
+
+    def publish_prediction_markers(self, pred_msg):
+        """
+        Publish RViz markers for the predicted human trajectories.
+
+        The visualization is built directly from the same PredictedPeople
+        message that is sent to the MPC. Therefore, it shows exactly the
+        prediction used by the planner, independent of whether the observation
+        source is GT, detection, or gazebo_topic.
+        """
+        marker_array = MarkerArray()
+        now = rospy.Time.now()
+
+        delete_marker = Marker()
+        delete_marker.header.frame_id = pred_msg.header.frame_id or self.prediction_frame
+        delete_marker.header.stamp = now
+        delete_marker.ns = "predicted_people"
+        delete_marker.id = 0
+        delete_marker.action = Marker.DELETEALL
+        marker_array.markers.append(delete_marker)
+
+        marker_id = 1
+        stride = max(1, int(self.pred_marker_stride))
+
+        for person in pred_msg.people:
+            if len(person.trajectory) == 0:
+                continue
+
+            # A line strip shows the full predicted path.
+            line_marker = Marker()
+            line_marker.header.frame_id = pred_msg.header.frame_id or self.prediction_frame
+            line_marker.header.stamp = now
+            line_marker.ns = "predicted_people"
+            line_marker.id = marker_id
+            marker_id += 1
+            line_marker.type = Marker.LINE_STRIP
+            line_marker.action = Marker.ADD
+            line_marker.pose.orientation.w = 1.0
+            line_marker.scale.x = 0.035
+            line_marker.color.r = 1.0
+            line_marker.color.g = 1.0
+            line_marker.color.b = 0.0
+            line_marker.color.a = 0.9
+
+            for pose in person.trajectory:
+                pt = Point()
+                pt.x = float(pose.x)
+                pt.y = float(pose.y)
+                pt.z = self.pred_marker_z
+                line_marker.points.append(pt)
+
+            marker_array.markers.append(line_marker)
+
+            # Small spheres show discrete prediction samples along the path.
+            radius = float(person.radius) if person.radius > 1e-6 else float(self.default_radius)
+            for k, pose in enumerate(person.trajectory):
+                if k % stride != 0:
+                    continue
+
+                sphere = Marker()
+                sphere.header.frame_id = pred_msg.header.frame_id or self.prediction_frame
+                sphere.header.stamp = now
+                sphere.ns = "predicted_people"
+                sphere.id = marker_id
+                marker_id += 1
+                sphere.type = Marker.SPHERE
+                sphere.action = Marker.ADD
+                sphere.pose.position.x = float(pose.x)
+                sphere.pose.position.y = float(pose.y)
+                sphere.pose.position.z = self.pred_marker_z
+                sphere.pose.orientation.w = 1.0
+
+                # The current point is slightly larger; future samples are smaller
+                # to keep the display readable when many people are visible.
+                if k == 0:
+                    scale = max(0.12, 0.70 * radius)
+                    alpha = 0.95
+                else:
+                    scale = max(0.07, 0.45 * radius)
+                    alpha = 0.55
+
+                sphere.scale.x = scale
+                sphere.scale.y = scale
+                sphere.scale.z = scale
+                sphere.color.r = 1.0
+                sphere.color.g = 1.0
+                sphere.color.b = 0.0
+                sphere.color.a = alpha
+                marker_array.markers.append(sphere)
+
+        self.pred_marker_pub.publish(marker_array)
+
     def build_learned_prediction_message(self):
         out = PredictedPeople()
         out.header.stamp = rospy.Time.now()
@@ -479,50 +987,31 @@ class ScriptedMultiHumanMotionNode:
         out.dt = self.dt_pred
         out.horizon = self.n_pred
 
+        if len(self.active_people) == 0:
+            return out
+
         if len(self.history) < self.predictor.obs_len:
             if not self.publish_before_history_full:
                 return out
-            # Until the observation window is full, keep the old GT extrapolation so MPC is not starved.
-            for human in self.humans:
-                traj = human.build_gt_extrapolation_prediction(self.dt_pred, self.n_pred)
-                person = PredictedPerson()
-                person.id = human.id
-                person.radius = human.radius
-                for x, y, th in traj:
-                    pose = Pose2D()
-                    pose.x = float(x)
-                    pose.y = float(y)
-                    pose.theta = float(th)
-                    person.trajectory.append(pose)
-                out.people.append(person)
-            return out
+            pred_wall_t0 = time.time()
+            pred_xy = self._constant_velocity_prediction_from_history(self.active_people)
+            self.prediction_processing_time_pub.publish(Float32(float(time.time() - pred_wall_t0)))
+            return self._build_prediction_message_from_xy(pred_xy)
 
         obs_xy = np.stack(list(self.history), axis=0)  # [obs_len, N, 2]
 
         try:
+            pred_wall_t0 = time.time()
             pred_xy, sigma_x, sigma_y, rho = self.predictor.predict(obs_xy, self.n_pred)
-
-            for i in range(len(self.humans)):
-                out.people.append(self._build_person_msg(i, pred_xy))
-
-            # Publish uncertainty once, outside the loop over humans.
+            self.prediction_processing_time_pub.publish(Float32(float(time.time() - pred_wall_t0)))
+            out = self._build_prediction_message_from_xy(pred_xy)
             unc_msg = self.build_uncertainty_message(sigma_x, sigma_y, rho)
             self.unc_pub.publish(unc_msg)
 
         except Exception as e:
-            rospy.logwarn_throttle(1.0, "Learned prediction failed; using GT extrapolation fallback: %s", str(e))
-            for human in self.humans:
-                traj = human.build_gt_extrapolation_prediction(self.dt_pred, self.n_pred)
-                person = PredictedPerson()
-                person.id = human.id
-                person.radius = human.radius
-                for x, y, th in traj:
-                    pose = Pose2D()
-                    pose.x = float(x)
-                    pose.y = float(y)
-                    pose.theta = float(th)
-                    person.trajectory.append(pose)
-                out.people.append(person)
+            rospy.logwarn_throttle(1.0, "Learned prediction failed; using constant-velocity fallback: %s", str(e))
+            pred_xy = self._constant_velocity_prediction_from_history(self.active_people)
+            out = self._build_prediction_message_from_xy(pred_xy)
 
         return out
 
@@ -534,28 +1023,55 @@ class ScriptedMultiHumanMotionNode:
             dt = (now - prev_time).to_sec()
             prev_time = now
 
-            # If simulated time jumps backward or is not advancing yet, avoid corrupting motion.
             if dt < 0.0:
                 rospy.logwarn_throttle(1.0, "Negative dt detected. Skipping this cycle.")
                 self.rate.sleep()
                 continue
 
-            # 1) Move humans. This must never depend on whether prediction/model works.
-            try:
-                for human in self.humans:
-                    vx, vy = human.step(dt)
-                    self.set_state(human.build_model_state(vx, vy))
-                    self.marker_pub.publish(human.build_marker(self.marker_frame))
-            except rospy.ServiceException as e:
-                rospy.logwarn_throttle(1.0, "Failed to set model state: %s", str(e))
-            except Exception as e:
-                rospy.logwarn_throttle(1.0, "Unexpected human motion error: %s", str(e))
+            # Move scripted Gazebo humans when requested. This is independent from the
+            # prediction source: in detection mode, the camera may observe these same moving actors.
+            if self.move_scripted_humans:
+                try:
+                    for human in self.humans:
+                        vx, vy = human.step(dt)
+                        self.set_state(human.build_model_state(vx, vy))
+                        # Do not publish GT markers here. Human markers are published
+                        # later from the selected source (GT / detection / gazebo_topic),
+                        # so RViz always shows exactly what the predictor and MPC use.
+                except rospy.ServiceException as e:
+                    rospy.logwarn_throttle(1.0, "Failed to set model state: %s", str(e))
+                except Exception as e:
+                    rospy.logwarn_throttle(1.0, "Unexpected human motion error: %s", str(e))
 
-            # 2) Prediction/uncertainty publishing. If this fails, humans still keep moving.
+            # Publish GT markers on a separate topic regardless of the selected source.
+            # This is useful in detection mode to visually compare detection vs. ground truth.
+            self.publish_gt_markers()
+            self.publish_gt_human_array()
+            self.publish_detected_markers()
+
             try:
-                self._update_history(now)
-                pred_msg = self.build_learned_prediction_message()
-                self.pred_pub.publish(pred_msg)
+                ok = self._update_history(now)
+                if ok:
+                    self.publish_source_markers()
+                    prediction_cycle_wall_t0 = time.time()
+                    pred_msg = self.build_learned_prediction_message()
+                    self.pred_pub.publish(pred_msg)
+                    now_pub = rospy.Time.now()
+                    self.last_prediction_publish_time = self._publish_rate_from_interval(
+                        self.prediction_publish_rate_pub, now_pub, self.last_prediction_publish_time
+                    )
+                    self.prediction_total_cycle_time_pub.publish(Float32(float(time.time() - prediction_cycle_wall_t0)))
+                    self.prediction_history_size_pub.publish(Int32(len(self.history)))
+                    self.prediction_num_people_pub.publish(Int32(len(pred_msg.people)))
+                    self.publish_prediction_markers(pred_msg)
+                    rospy.loginfo_throttle(
+                        1.0,
+                        "Published predicted_people from source='%s' | people=%d | history=%d/%d",
+                        self.human_source,
+                        len(pred_msg.people),
+                        len(self.history),
+                        self.predictor.obs_len
+                    )
             except Exception as e:
                 rospy.logwarn_throttle(1.0, "Prediction publishing failed, but human motion continues: %s", str(e))
 

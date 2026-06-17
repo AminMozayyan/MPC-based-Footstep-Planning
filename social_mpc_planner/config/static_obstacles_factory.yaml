@@ -1,820 +1,461 @@
 frame_id: odom
-notes: Circular approximation of factory(2).world for social_mpc_planner. r is obstacle
-  radius in meters.
+notes: 'Corrected circular approximation of factory(6).world static obstacles. Shelf
+  yaw directions fixed: shelf1 follows world yaw 0.0 along x; shelf3 follows world
+  yaw 1.57 along y.'
 static_obstacles:
 - x: -8.2
   y: 8.0
-  r: 0.35
+  r: 0.45
   source: north_wall
-  model: box
-- x: -7.79
+  model: box_wall
+- x: -7.455
   y: 8.0
-  r: 0.35
+  r: 0.45
   source: north_wall
-  model: box
-- x: -7.38
+  model: box_wall
+- x: -6.709
   y: 8.0
-  r: 0.35
+  r: 0.45
   source: north_wall
-  model: box
-- x: -6.97
+  model: box_wall
+- x: -5.964
   y: 8.0
-  r: 0.35
+  r: 0.45
   source: north_wall
-  model: box
-- x: -6.56
+  model: box_wall
+- x: -5.218
   y: 8.0
-  r: 0.35
+  r: 0.45
   source: north_wall
-  model: box
-- x: -6.15
+  model: box_wall
+- x: -4.473
   y: 8.0
-  r: 0.35
+  r: 0.45
   source: north_wall
-  model: box
-- x: -5.74
+  model: box_wall
+- x: -3.727
   y: 8.0
-  r: 0.35
+  r: 0.45
   source: north_wall
-  model: box
-- x: -5.33
+  model: box_wall
+- x: -2.982
   y: 8.0
-  r: 0.35
+  r: 0.45
   source: north_wall
-  model: box
-- x: -4.92
+  model: box_wall
+- x: -2.236
   y: 8.0
-  r: 0.35
+  r: 0.45
   source: north_wall
-  model: box
-- x: -4.51
+  model: box_wall
+- x: -1.491
   y: 8.0
-  r: 0.35
+  r: 0.45
   source: north_wall
-  model: box
-- x: -4.1
+  model: box_wall
+- x: -0.745
   y: 8.0
-  r: 0.35
+  r: 0.45
   source: north_wall
-  model: box
-- x: -3.69
-  y: 8.0
-  r: 0.35
-  source: north_wall
-  model: box
-- x: -3.28
-  y: 8.0
-  r: 0.35
-  source: north_wall
-  model: box
-- x: -2.87
-  y: 8.0
-  r: 0.35
-  source: north_wall
-  model: box
-- x: -2.46
-  y: 8.0
-  r: 0.35
-  source: north_wall
-  model: box
-- x: -2.05
-  y: 8.0
-  r: 0.35
-  source: north_wall
-  model: box
-- x: -1.64
-  y: 8.0
-  r: 0.35
-  source: north_wall
-  model: box
-- x: -1.23
-  y: 8.0
-  r: 0.35
-  source: north_wall
-  model: box
-- x: -0.82
-  y: 8.0
-  r: 0.35
-  source: north_wall
-  model: box
-- x: -0.41
-  y: 8.0
-  r: 0.35
-  source: north_wall
-  model: box
+  model: box_wall
 - x: 0.0
   y: 8.0
-  r: 0.35
+  r: 0.45
   source: north_wall
-  model: box
-- x: 0.41
+  model: box_wall
+- x: 0.745
   y: 8.0
-  r: 0.35
+  r: 0.45
   source: north_wall
-  model: box
-- x: 0.82
+  model: box_wall
+- x: 1.491
   y: 8.0
-  r: 0.35
+  r: 0.45
   source: north_wall
-  model: box
-- x: 1.23
+  model: box_wall
+- x: 2.236
   y: 8.0
-  r: 0.35
+  r: 0.45
   source: north_wall
-  model: box
-- x: 1.64
+  model: box_wall
+- x: 2.982
   y: 8.0
-  r: 0.35
+  r: 0.45
   source: north_wall
-  model: box
-- x: 2.05
+  model: box_wall
+- x: 3.727
   y: 8.0
-  r: 0.35
+  r: 0.45
   source: north_wall
-  model: box
-- x: 2.46
+  model: box_wall
+- x: 4.473
   y: 8.0
-  r: 0.35
+  r: 0.45
   source: north_wall
-  model: box
-- x: 2.87
+  model: box_wall
+- x: 5.218
   y: 8.0
-  r: 0.35
+  r: 0.45
   source: north_wall
-  model: box
-- x: 3.28
+  model: box_wall
+- x: 5.964
   y: 8.0
-  r: 0.35
+  r: 0.45
   source: north_wall
-  model: box
-- x: 3.69
+  model: box_wall
+- x: 6.709
   y: 8.0
-  r: 0.35
+  r: 0.45
   source: north_wall
-  model: box
-- x: 4.1
+  model: box_wall
+- x: 7.455
   y: 8.0
-  r: 0.35
+  r: 0.45
   source: north_wall
-  model: box
-- x: 4.51
-  y: 8.0
-  r: 0.35
-  source: north_wall
-  model: box
-- x: 4.92
-  y: 8.0
-  r: 0.35
-  source: north_wall
-  model: box
-- x: 5.33
-  y: 8.0
-  r: 0.35
-  source: north_wall
-  model: box
-- x: 5.74
-  y: 8.0
-  r: 0.35
-  source: north_wall
-  model: box
-- x: 6.15
-  y: 8.0
-  r: 0.35
-  source: north_wall
-  model: box
-- x: 6.56
-  y: 8.0
-  r: 0.35
-  source: north_wall
-  model: box
-- x: 6.97
-  y: 8.0
-  r: 0.35
-  source: north_wall
-  model: box
-- x: 7.38
-  y: 8.0
-  r: 0.35
-  source: north_wall
-  model: box
-- x: 7.79
-  y: 8.0
-  r: 0.35
-  source: north_wall
-  model: box
+  model: box_wall
 - x: 8.2
   y: 8.0
-  r: 0.35
+  r: 0.45
   source: north_wall
-  model: box
+  model: box_wall
 - x: -8.2
   y: -8.0
-  r: 0.35
+  r: 0.45
   source: south_wall
-  model: box
-- x: -7.79
+  model: box_wall
+- x: -7.455
   y: -8.0
-  r: 0.35
+  r: 0.45
   source: south_wall
-  model: box
-- x: -7.38
+  model: box_wall
+- x: -6.709
   y: -8.0
-  r: 0.35
+  r: 0.45
   source: south_wall
-  model: box
-- x: -6.97
+  model: box_wall
+- x: -5.964
   y: -8.0
-  r: 0.35
+  r: 0.45
   source: south_wall
-  model: box
-- x: -6.56
+  model: box_wall
+- x: -5.218
   y: -8.0
-  r: 0.35
+  r: 0.45
   source: south_wall
-  model: box
-- x: -6.15
+  model: box_wall
+- x: -4.473
   y: -8.0
-  r: 0.35
+  r: 0.45
   source: south_wall
-  model: box
-- x: -5.74
+  model: box_wall
+- x: -3.727
   y: -8.0
-  r: 0.35
+  r: 0.45
   source: south_wall
-  model: box
-- x: -5.33
+  model: box_wall
+- x: -2.982
   y: -8.0
-  r: 0.35
+  r: 0.45
   source: south_wall
-  model: box
-- x: -4.92
+  model: box_wall
+- x: -2.236
   y: -8.0
-  r: 0.35
+  r: 0.45
   source: south_wall
-  model: box
-- x: -4.51
+  model: box_wall
+- x: -1.491
   y: -8.0
-  r: 0.35
+  r: 0.45
   source: south_wall
-  model: box
-- x: -4.1
+  model: box_wall
+- x: -0.745
   y: -8.0
-  r: 0.35
+  r: 0.45
   source: south_wall
-  model: box
-- x: -3.69
-  y: -8.0
-  r: 0.35
-  source: south_wall
-  model: box
-- x: -3.28
-  y: -8.0
-  r: 0.35
-  source: south_wall
-  model: box
-- x: -2.87
-  y: -8.0
-  r: 0.35
-  source: south_wall
-  model: box
-- x: -2.46
-  y: -8.0
-  r: 0.35
-  source: south_wall
-  model: box
-- x: -2.05
-  y: -8.0
-  r: 0.35
-  source: south_wall
-  model: box
-- x: -1.64
-  y: -8.0
-  r: 0.35
-  source: south_wall
-  model: box
-- x: -1.23
-  y: -8.0
-  r: 0.35
-  source: south_wall
-  model: box
-- x: -0.82
-  y: -8.0
-  r: 0.35
-  source: south_wall
-  model: box
-- x: -0.41
-  y: -8.0
-  r: 0.35
-  source: south_wall
-  model: box
+  model: box_wall
 - x: 0.0
   y: -8.0
-  r: 0.35
+  r: 0.45
   source: south_wall
-  model: box
-- x: 0.41
+  model: box_wall
+- x: 0.745
   y: -8.0
-  r: 0.35
+  r: 0.45
   source: south_wall
-  model: box
-- x: 0.82
+  model: box_wall
+- x: 1.491
   y: -8.0
-  r: 0.35
+  r: 0.45
   source: south_wall
-  model: box
-- x: 1.23
+  model: box_wall
+- x: 2.236
   y: -8.0
-  r: 0.35
+  r: 0.45
   source: south_wall
-  model: box
-- x: 1.64
+  model: box_wall
+- x: 2.982
   y: -8.0
-  r: 0.35
+  r: 0.45
   source: south_wall
-  model: box
-- x: 2.05
+  model: box_wall
+- x: 3.727
   y: -8.0
-  r: 0.35
+  r: 0.45
   source: south_wall
-  model: box
-- x: 2.46
+  model: box_wall
+- x: 4.473
   y: -8.0
-  r: 0.35
+  r: 0.45
   source: south_wall
-  model: box
-- x: 2.87
+  model: box_wall
+- x: 5.218
   y: -8.0
-  r: 0.35
+  r: 0.45
   source: south_wall
-  model: box
-- x: 3.28
+  model: box_wall
+- x: 5.964
   y: -8.0
-  r: 0.35
+  r: 0.45
   source: south_wall
-  model: box
-- x: 3.69
+  model: box_wall
+- x: 6.709
   y: -8.0
-  r: 0.35
+  r: 0.45
   source: south_wall
-  model: box
-- x: 4.1
+  model: box_wall
+- x: 7.455
   y: -8.0
-  r: 0.35
+  r: 0.45
   source: south_wall
-  model: box
-- x: 4.51
-  y: -8.0
-  r: 0.35
-  source: south_wall
-  model: box
-- x: 4.92
-  y: -8.0
-  r: 0.35
-  source: south_wall
-  model: box
-- x: 5.33
-  y: -8.0
-  r: 0.35
-  source: south_wall
-  model: box
-- x: 5.74
-  y: -8.0
-  r: 0.35
-  source: south_wall
-  model: box
-- x: 6.15
-  y: -8.0
-  r: 0.35
-  source: south_wall
-  model: box
-- x: 6.56
-  y: -8.0
-  r: 0.35
-  source: south_wall
-  model: box
-- x: 6.97
-  y: -8.0
-  r: 0.35
-  source: south_wall
-  model: box
-- x: 7.38
-  y: -8.0
-  r: 0.35
-  source: south_wall
-  model: box
-- x: 7.79
-  y: -8.0
-  r: 0.35
-  source: south_wall
-  model: box
+  model: box_wall
 - x: 8.2
   y: -8.0
-  r: 0.35
+  r: 0.45
   source: south_wall
-  model: box
+  model: box_wall
 - x: 8.0
   y: -8.0
-  r: 0.35
+  r: 0.45
   source: east_wall
-  model: box
+  model: box_wall
 - x: 8.0
-  y: -7.59
-  r: 0.35
+  y: -7.238
+  r: 0.45
   source: east_wall
-  model: box
+  model: box_wall
 - x: 8.0
-  y: -7.179
-  r: 0.35
+  y: -6.476
+  r: 0.45
   source: east_wall
-  model: box
+  model: box_wall
 - x: 8.0
-  y: -6.769
-  r: 0.35
+  y: -5.714
+  r: 0.45
   source: east_wall
-  model: box
+  model: box_wall
 - x: 8.0
-  y: -6.359
-  r: 0.35
+  y: -4.952
+  r: 0.45
   source: east_wall
-  model: box
+  model: box_wall
 - x: 8.0
-  y: -5.949
-  r: 0.35
+  y: -4.19
+  r: 0.45
   source: east_wall
-  model: box
+  model: box_wall
 - x: 8.0
-  y: -5.538
-  r: 0.35
+  y: -3.429
+  r: 0.45
   source: east_wall
-  model: box
-- x: 8.0
-  y: -5.128
-  r: 0.35
-  source: east_wall
-  model: box
-- x: 8.0
-  y: -4.718
-  r: 0.35
-  source: east_wall
-  model: box
-- x: 8.0
-  y: -4.308
-  r: 0.35
-  source: east_wall
-  model: box
-- x: 8.0
-  y: -3.897
-  r: 0.35
-  source: east_wall
-  model: box
-- x: 8.0
-  y: -3.487
-  r: 0.35
-  source: east_wall
-  model: box
-- x: 8.0
-  y: -3.077
-  r: 0.35
-  source: east_wall
-  model: box
+  model: box_wall
 - x: 8.0
   y: -2.667
-  r: 0.35
+  r: 0.45
   source: east_wall
-  model: box
+  model: box_wall
 - x: 8.0
-  y: -2.256
-  r: 0.35
+  y: -1.905
+  r: 0.45
   source: east_wall
-  model: box
+  model: box_wall
 - x: 8.0
-  y: -1.846
-  r: 0.35
+  y: -1.143
+  r: 0.45
   source: east_wall
-  model: box
+  model: box_wall
 - x: 8.0
-  y: -1.436
-  r: 0.35
+  y: -0.381
+  r: 0.45
   source: east_wall
-  model: box
+  model: box_wall
 - x: 8.0
-  y: -1.026
-  r: 0.35
+  y: 0.381
+  r: 0.45
   source: east_wall
-  model: box
+  model: box_wall
 - x: 8.0
-  y: -0.615
-  r: 0.35
+  y: 1.143
+  r: 0.45
   source: east_wall
-  model: box
+  model: box_wall
 - x: 8.0
-  y: -0.205
-  r: 0.35
+  y: 1.905
+  r: 0.45
   source: east_wall
-  model: box
-- x: 8.0
-  y: 0.205
-  r: 0.35
-  source: east_wall
-  model: box
-- x: 8.0
-  y: 0.615
-  r: 0.35
-  source: east_wall
-  model: box
-- x: 8.0
-  y: 1.026
-  r: 0.35
-  source: east_wall
-  model: box
-- x: 8.0
-  y: 1.436
-  r: 0.35
-  source: east_wall
-  model: box
-- x: 8.0
-  y: 1.846
-  r: 0.35
-  source: east_wall
-  model: box
-- x: 8.0
-  y: 2.256
-  r: 0.35
-  source: east_wall
-  model: box
+  model: box_wall
 - x: 8.0
   y: 2.667
-  r: 0.35
+  r: 0.45
   source: east_wall
-  model: box
+  model: box_wall
 - x: 8.0
-  y: 3.077
-  r: 0.35
+  y: 3.429
+  r: 0.45
   source: east_wall
-  model: box
+  model: box_wall
 - x: 8.0
-  y: 3.487
-  r: 0.35
+  y: 4.19
+  r: 0.45
   source: east_wall
-  model: box
+  model: box_wall
 - x: 8.0
-  y: 3.897
-  r: 0.35
+  y: 4.952
+  r: 0.45
   source: east_wall
-  model: box
+  model: box_wall
 - x: 8.0
-  y: 4.308
-  r: 0.35
+  y: 5.714
+  r: 0.45
   source: east_wall
-  model: box
+  model: box_wall
 - x: 8.0
-  y: 4.718
-  r: 0.35
+  y: 6.476
+  r: 0.45
   source: east_wall
-  model: box
+  model: box_wall
 - x: 8.0
-  y: 5.128
-  r: 0.35
+  y: 7.238
+  r: 0.45
   source: east_wall
-  model: box
-- x: 8.0
-  y: 5.538
-  r: 0.35
-  source: east_wall
-  model: box
-- x: 8.0
-  y: 5.949
-  r: 0.35
-  source: east_wall
-  model: box
-- x: 8.0
-  y: 6.359
-  r: 0.35
-  source: east_wall
-  model: box
-- x: 8.0
-  y: 6.769
-  r: 0.35
-  source: east_wall
-  model: box
-- x: 8.0
-  y: 7.179
-  r: 0.35
-  source: east_wall
-  model: box
-- x: 8.0
-  y: 7.59
-  r: 0.35
-  source: east_wall
-  model: box
+  model: box_wall
 - x: 8.0
   y: 8.0
-  r: 0.35
+  r: 0.45
   source: east_wall
-  model: box
+  model: box_wall
 - x: -8.0
   y: -8.0
-  r: 0.35
+  r: 0.45
   source: west_wall
-  model: box
+  model: box_wall
 - x: -8.0
-  y: -7.59
-  r: 0.35
+  y: -7.238
+  r: 0.45
   source: west_wall
-  model: box
+  model: box_wall
 - x: -8.0
-  y: -7.179
-  r: 0.35
+  y: -6.476
+  r: 0.45
   source: west_wall
-  model: box
+  model: box_wall
 - x: -8.0
-  y: -6.769
-  r: 0.35
+  y: -5.714
+  r: 0.45
   source: west_wall
-  model: box
+  model: box_wall
 - x: -8.0
-  y: -6.359
-  r: 0.35
+  y: -4.952
+  r: 0.45
   source: west_wall
-  model: box
+  model: box_wall
 - x: -8.0
-  y: -5.949
-  r: 0.35
+  y: -4.19
+  r: 0.45
   source: west_wall
-  model: box
+  model: box_wall
 - x: -8.0
-  y: -5.538
-  r: 0.35
+  y: -3.429
+  r: 0.45
   source: west_wall
-  model: box
-- x: -8.0
-  y: -5.128
-  r: 0.35
-  source: west_wall
-  model: box
-- x: -8.0
-  y: -4.718
-  r: 0.35
-  source: west_wall
-  model: box
-- x: -8.0
-  y: -4.308
-  r: 0.35
-  source: west_wall
-  model: box
-- x: -8.0
-  y: -3.897
-  r: 0.35
-  source: west_wall
-  model: box
-- x: -8.0
-  y: -3.487
-  r: 0.35
-  source: west_wall
-  model: box
-- x: -8.0
-  y: -3.077
-  r: 0.35
-  source: west_wall
-  model: box
+  model: box_wall
 - x: -8.0
   y: -2.667
-  r: 0.35
+  r: 0.45
   source: west_wall
-  model: box
+  model: box_wall
 - x: -8.0
-  y: -2.256
-  r: 0.35
+  y: -1.905
+  r: 0.45
   source: west_wall
-  model: box
+  model: box_wall
 - x: -8.0
-  y: -1.846
-  r: 0.35
+  y: -1.143
+  r: 0.45
   source: west_wall
-  model: box
+  model: box_wall
 - x: -8.0
-  y: -1.436
-  r: 0.35
+  y: -0.381
+  r: 0.45
   source: west_wall
-  model: box
+  model: box_wall
 - x: -8.0
-  y: -1.026
-  r: 0.35
+  y: 0.381
+  r: 0.45
   source: west_wall
-  model: box
+  model: box_wall
 - x: -8.0
-  y: -0.615
-  r: 0.35
+  y: 1.143
+  r: 0.45
   source: west_wall
-  model: box
+  model: box_wall
 - x: -8.0
-  y: -0.205
-  r: 0.35
+  y: 1.905
+  r: 0.45
   source: west_wall
-  model: box
-- x: -8.0
-  y: 0.205
-  r: 0.35
-  source: west_wall
-  model: box
-- x: -8.0
-  y: 0.615
-  r: 0.35
-  source: west_wall
-  model: box
-- x: -8.0
-  y: 1.026
-  r: 0.35
-  source: west_wall
-  model: box
-- x: -8.0
-  y: 1.436
-  r: 0.35
-  source: west_wall
-  model: box
-- x: -8.0
-  y: 1.846
-  r: 0.35
-  source: west_wall
-  model: box
-- x: -8.0
-  y: 2.256
-  r: 0.35
-  source: west_wall
-  model: box
+  model: box_wall
 - x: -8.0
   y: 2.667
-  r: 0.35
+  r: 0.45
   source: west_wall
-  model: box
+  model: box_wall
 - x: -8.0
-  y: 3.077
-  r: 0.35
+  y: 3.429
+  r: 0.45
   source: west_wall
-  model: box
+  model: box_wall
 - x: -8.0
-  y: 3.487
-  r: 0.35
+  y: 4.19
+  r: 0.45
   source: west_wall
-  model: box
+  model: box_wall
 - x: -8.0
-  y: 3.897
-  r: 0.35
+  y: 4.952
+  r: 0.45
   source: west_wall
-  model: box
+  model: box_wall
 - x: -8.0
-  y: 4.308
-  r: 0.35
+  y: 5.714
+  r: 0.45
   source: west_wall
-  model: box
+  model: box_wall
 - x: -8.0
-  y: 4.718
-  r: 0.35
+  y: 6.476
+  r: 0.45
   source: west_wall
-  model: box
+  model: box_wall
 - x: -8.0
-  y: 5.128
-  r: 0.35
+  y: 7.238
+  r: 0.45
   source: west_wall
-  model: box
-- x: -8.0
-  y: 5.538
-  r: 0.35
-  source: west_wall
-  model: box
-- x: -8.0
-  y: 5.949
-  r: 0.35
-  source: west_wall
-  model: box
-- x: -8.0
-  y: 6.359
-  r: 0.35
-  source: west_wall
-  model: box
-- x: -8.0
-  y: 6.769
-  r: 0.35
-  source: west_wall
-  model: box
-- x: -8.0
-  y: 7.179
-  r: 0.35
-  source: west_wall
-  model: box
-- x: -8.0
-  y: 7.59
-  r: 0.35
-  source: west_wall
-  model: box
+  model: box_wall
 - x: -8.0
   y: 8.0
-  r: 0.35
+  r: 0.45
   source: west_wall
-  model: box
-- x: -0.002
-  y: -8.0
-  r: 0.32
+  model: box_wall
+- x: -0.001
+  y: -7.875
+  r: 0.38
   source: middle_wall
   model: box
 - x: -0.001
@@ -930,145 +571,145 @@ static_obstacles:
 - x: 0.002
   y: 8.0
   r: 0.32
-  source: middle_wall2
-  model: box
-- x: 3.799
-  y: 2.7
-  r: 0.55
-  source: shelf1
-  model: aws_robomaker_warehouse_ShelfE_01
-- x: 3.8
-  y: 3.25
-  r: 0.55
-  source: shelf1
-  model: aws_robomaker_warehouse_ShelfE_01
-- x: 3.8
-  y: 3.8
-  r: 0.55
-  source: shelf1
-  model: aws_robomaker_warehouse_ShelfE_01
-- x: 3.8
-  y: 4.35
-  r: 0.55
-  source: shelf1
-  model: aws_robomaker_warehouse_ShelfE_01
-- x: 3.801
-  y: 4.9
-  r: 0.55
-  source: shelf1
-  model: aws_robomaker_warehouse_ShelfE_01
-- x: -3.001
-  y: 1.9
-  r: 0.55
-  source: shelf3
-  model: aws_robomaker_warehouse_ShelfE_01
-- x: -3.0
-  y: 2.45
-  r: 0.55
-  source: shelf3
-  model: aws_robomaker_warehouse_ShelfE_01
-- x: -3.0
-  y: 3.0
-  r: 0.55
-  source: shelf3
-  model: aws_robomaker_warehouse_ShelfE_01
-- x: -3.0
-  y: 3.55
-  r: 0.55
-  source: shelf3
-  model: aws_robomaker_warehouse_ShelfE_01
-- x: -2.999
-  y: 4.1
-  r: 0.55
-  source: shelf3
-  model: aws_robomaker_warehouse_ShelfE_01
-- x: -6.8
-  y: 1.0
+  source: desk1
+  model: aws_robomaker_warehouse_DeskC_01
+- x: -6.5
+  y: 0.74
   r: 0.5
   source: desk1
   model: aws_robomaker_warehouse_DeskC_01
-- x: -6.267
-  y: 1.0
+- x: -6.5
+  y: 1.26
   r: 0.5
   source: desk1
   model: aws_robomaker_warehouse_DeskC_01
-- x: -5.733
-  y: 1.0
+- x: -6.5
+  y: 0.24
   r: 0.5
   source: desk1
   model: aws_robomaker_warehouse_DeskC_01
-- x: -5.2
-  y: 1.0
-  r: 0.5
-  source: desk1
-  model: aws_robomaker_warehouse_DeskC_01
-- x: -3.9
-  y: -5.0
-  r: 0.55
+- x: -4.044
+  y: -5.689
+  r: 0.62
   source: box1
   model: aws_robomaker_warehouse_ClutteringC_01
-- x: -3.5
-  y: -5.0
-  r: 0.55
+- x: -4.044
+  y: -4.311
+  r: 0.62
   source: box1
   model: aws_robomaker_warehouse_ClutteringC_01
-- x: -3.1
-  y: -5.0
-  r: 0.55
+- x: -2.956
+  y: -5.689
+  r: 0.62
   source: box1
   model: aws_robomaker_warehouse_ClutteringC_01
-- x: -7.4
-  y: -5.0
-  r: 0.55
+- x: -2.956
+  y: -4.311
+  r: 0.62
+  source: box1
+  model: aws_robomaker_warehouse_ClutteringC_01
+- x: -7.734
+  y: -5.654
+  r: 0.63
   source: box2
   model: aws_robomaker_warehouse_ClutteringA_01
-- x: -7.0
-  y: -5.0
-  r: 0.55
+- x: -7.734
+  y: -4.346
+  r: 0.63
   source: box2
   model: aws_robomaker_warehouse_ClutteringA_01
-- x: -6.6
-  y: -5.0
-  r: 0.55
+- x: -6.266
+  y: -5.654
+  r: 0.63
   source: box2
   model: aws_robomaker_warehouse_ClutteringA_01
-- x: 2.0
-  y: -6.0
-  r: 0.35
+- x: -6.266
+  y: -4.346
+  r: 0.63
+  source: box2
+  model: aws_robomaker_warehouse_ClutteringA_01
+- x: 1.0
+  y: 1.0
+  r: 0.62
   source: bucket1
   model: aws_robomaker_warehouse_Bucket_01
-- x: -6.275
+- x: -6.74
   y: 6.0
-  r: 0.4
+  r: 0.52
   source: trash1
   model: aws_robomaker_warehouse_TrashCanC_01
 - x: -6.0
   y: 6.0
-  r: 0.4
+  r: 0.52
   source: trash1
   model: aws_robomaker_warehouse_TrashCanC_01
-- x: -5.725
+- x: -5.26
   y: 6.0
-  r: 0.4
+  r: 0.52
   source: trash1
   model: aws_robomaker_warehouse_TrashCanC_01
-- x: 4.999
-  y: -3.9
-  r: 0.48
+- x: 5.0
+  y: -3.68
+  r: 0.38
   source: pallet1
   model: aws_robomaker_warehouse_PalletJackB_01
 - x: 5.0
-  y: -3.367
-  r: 0.48
+  y: -3.1
+  r: 0.38
   source: pallet1
   model: aws_robomaker_warehouse_PalletJackB_01
 - x: 5.0
-  y: -2.833
-  r: 0.48
+  y: -2.52
+  r: 0.38
   source: pallet1
   model: aws_robomaker_warehouse_PalletJackB_01
-- x: 5.001
-  y: -2.3
-  r: 0.48
-  source: pallet1
-  model: aws_robomaker_warehouse_PalletJackB_01
+- x: 2.495
+  y: 3.8
+  r: 0.56
+  source: shelf1
+  model: aws_robomaker_warehouse_ShelfE_01
+- x: 3.147
+  y: 3.8
+  r: 0.56
+  source: shelf1
+  model: aws_robomaker_warehouse_ShelfE_01
+- x: 3.8
+  y: 3.8
+  r: 0.56
+  source: shelf1
+  model: aws_robomaker_warehouse_ShelfE_01
+- x: 4.453
+  y: 3.8
+  r: 0.56
+  source: shelf1
+  model: aws_robomaker_warehouse_ShelfE_01
+- x: 5.105
+  y: 3.8
+  r: 0.56
+  source: shelf1
+  model: aws_robomaker_warehouse_ShelfE_01
+- x: -3.0
+  y: 1.695
+  r: 0.56
+  source: shelf3
+  model: aws_robomaker_warehouse_ShelfE_01
+- x: -3.0
+  y: 2.347
+  r: 0.56
+  source: shelf3
+  model: aws_robomaker_warehouse_ShelfE_01
+- x: -3.0
+  y: 3.0
+  r: 0.56
+  source: shelf3
+  model: aws_robomaker_warehouse_ShelfE_01
+- x: -3.0
+  y: 3.653
+  r: 0.56
+  source: shelf3
+  model: aws_robomaker_warehouse_ShelfE_01
+- x: -3.0
+  y: 4.305
+  r: 0.56
+  source: shelf3
+  model: aws_robomaker_warehouse_ShelfE_01

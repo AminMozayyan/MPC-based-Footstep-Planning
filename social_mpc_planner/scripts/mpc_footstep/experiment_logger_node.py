@@ -39,6 +39,7 @@ from social_mpc_planner.msg import (
     CircularObstacleArray,
     PredictedPeople,
     PredictedPeopleUncertainty,
+    HumanArray,
 )
 
 
@@ -55,6 +56,15 @@ class ExperimentLogger:
         self.goal_yaw_tolerance = math.radians(float(rospy.get_param("~goal_yaw_tolerance_deg", 10.0)))
         self.max_navigation_time = float(rospy.get_param("~max_navigation_time", 120.0))
         self.log_rate_hz = float(rospy.get_param("~log_rate_hz", 20.0))
+
+        # Human source topics for independent logging.
+        # These are logged separately from /predicted_people so that GT and
+        # camera detections can be plotted and compared per human ID.
+        self.gt_humans_topic = rospy.get_param("~gt_humans_topic", "/gazebo_humans_world")
+        self.detected_humans_topic = rospy.get_param("~detected_humans_topic", "/detected_humans_world")
+        self.predicted_people_topic = rospy.get_param("~predicted_people_topic", "/predicted_people")
+        self.planner_human_source = rospy.get_param("~planner_human_source", "selected")
+        self.log_human_sources_when_inactive = bool(rospy.get_param("~log_human_sources_when_inactive", False))
 
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         self.run_dir = os.path.join(self.output_root, f"{self.experiment_name}_{timestamp}")
@@ -77,10 +87,14 @@ class ExperimentLogger:
 
         self.latest_odom = None
         self.latest_people = []
+        self.latest_gt_humans = []
+        self.latest_detected_humans = []
         self.latest_predicted_people = []
         self.latest_predicted_people_uncertainty = []
         self.latest_obstacles = []
         self.last_people_signature = None
+        self.last_gt_humans_signature = None
+        self.last_detected_humans_signature = None
         self.last_predicted_people_signature = None
         self.last_predicted_people_uncertainty_signature = None
         self.last_logged_obstacles_signature = None
@@ -94,6 +108,7 @@ class ExperimentLogger:
         self.total_generated_footsteps = 0
         self.mpc_solve_times = []
         self.replan_cycle_times = []
+        self.timing_stats = {}
 
         self.min_human_clearance = float("inf")
         self.min_obstacle_clearance = float("inf")
@@ -113,7 +128,9 @@ class ExperimentLogger:
         rospy.Subscriber("/odom", Odometry, self.odom_callback)
         rospy.Subscriber("/move_base_simple/goal", PoseStamped, self.goal_callback)
         rospy.Subscriber("/static_obstacles", CircularObstacleArray, self.static_obstacles_callback)
-        rospy.Subscriber("/predicted_people", PredictedPeople, self.predicted_people_callback)
+        rospy.Subscriber(self.gt_humans_topic, HumanArray, self.gt_humans_callback)
+        rospy.Subscriber(self.detected_humans_topic, HumanArray, self.detected_humans_callback)
+        rospy.Subscriber(self.predicted_people_topic, PredictedPeople, self.predicted_people_callback)
         rospy.Subscriber(
             "/predicted_people_uncertainty",
             PredictedPeopleUncertainty,
@@ -126,6 +143,31 @@ class ExperimentLogger:
         rospy.Subscriber("/evaluation/generated_footsteps_count", Int32, self.generated_footsteps_callback)
         rospy.Subscriber("/evaluation/goal_reached", Bool, self.goal_reached_callback)
         rospy.Subscriber("/evaluation/planner_status", String, self.planner_status_callback)
+
+        # Timing and frequency topics from perception, prediction and planner integration.
+        timing_topics = {
+            "/evaluation/camera_rgb_rate_hz": "camera_rgb_rate_hz",
+            "/evaluation/camera_depth_rate_hz": "camera_depth_rate_hz",
+            "/evaluation/detection_processing_time": "detection_processing_time",
+            "/evaluation/detection_total_cycle_time": "detection_total_cycle_time",
+            "/evaluation/detection_publish_rate_hz": "detection_publish_rate_hz",
+            "/evaluation/gazebo_humans_publish_rate_hz": "gazebo_humans_publish_rate_hz",
+            "/evaluation/gt_humans_publish_rate_hz": "gt_humans_publish_rate_hz",
+            "/evaluation/prediction_input_rate_hz": "prediction_input_rate_hz",
+            "/evaluation/prediction_processing_time": "prediction_processing_time",
+            "/evaluation/prediction_total_cycle_time": "prediction_total_cycle_time",
+            "/evaluation/prediction_publish_rate_hz": "prediction_publish_rate_hz",
+        }
+        for topic, metric_name in timing_topics.items():
+            rospy.Subscriber(topic, Float32, self.timing_callback, callback_args=metric_name)
+
+        count_topics = {
+            "/evaluation/detection_num_humans": "detection_num_humans",
+            "/evaluation/prediction_history_size": "prediction_history_size",
+            "/evaluation/prediction_num_people": "prediction_num_people",
+        }
+        for topic, metric_name in count_topics.items():
+            rospy.Subscriber(topic, Int32, self.timing_callback, callback_args=metric_name)
 
         rospy.Subscriber(rospy.get_param("~zmp_topic", "/zmp"), PointStamped, self.zmp_callback)
         rospy.Subscriber(rospy.get_param("~dcm_topic", "/dcm"), PointStamped, self.dcm_callback)
@@ -144,11 +186,19 @@ class ExperimentLogger:
             "planner": ["t", "event", "value"],
             "zmp": ["t", "zmp_x", "zmp_y", "stability_margin"],
             "dcm": ["t", "dcm_x", "dcm_y", "dcm_margin", "com_x", "com_y", "dcm_com_distance"],
+            # selected_humans/humans: the first point of /predicted_people,
+            # i.e., the human positions actually used by the predictor/MPC.
             "humans": ["t", "person_id", "x", "y", "radius"],
+
+            # Independent raw sources for plotting and post-processing.
+            "gt_humans": ["t", "person_id", "x", "y", "radius"],
+            "detected_humans": ["t", "person_id", "x", "y", "radius"],
+
             "predicted_humans": ["t", "person_id", "pred_step", "x", "y", "radius"],
             "predicted_human_uncertainty": ["t", "person_id", "pred_step", "sigma_x", "sigma_y", "rho"],
             "events": ["t", "event", "details"],
             "static_obstacles": ["t", "obstacle_id", "x", "y", "radius"],
+            "timing": ["t", "metric", "value"],
         }
         for name, header in specs.items():
             f = open(os.path.join(self.run_dir, f"{name}.csv"), "w", newline="")
@@ -203,6 +253,13 @@ class ExperimentLogger:
         self.total_generated_footsteps = 0
         self.mpc_solve_times = []
         self.replan_cycle_times = []
+        self.timing_stats = {}
+
+        self.last_people_signature = None
+        self.last_gt_humans_signature = None
+        self.last_detected_humans_signature = None
+        self.last_predicted_people_signature = None
+        self.last_predicted_people_uncertainty_signature = None
 
         self.write_event("new_goal", json.dumps({"goal_x": self.goal[0], "goal_y": self.goal[1]}))
         rospy.loginfo("Experiment logging started for goal x=%.3f y=%.3f", self.goal[0], self.goal[1])
@@ -250,6 +307,62 @@ class ExperimentLogger:
                     for i, o in enumerate(msg.obstacles)
                 ]
             })
+        )
+
+    def _humanarray_to_list(self, msg):
+        humans = []
+        for h in msg.humans:
+            # Human messages in this project normally contain id, x and y.
+            # If a radius field exists in a future message definition, use it;
+            # otherwise fall back to the logger default.
+            radius = getattr(h, "radius", self.default_human_radius)
+            if radius is None or float(radius) <= 0.0:
+                radius = self.default_human_radius
+
+            humans.append((
+                int(h.id),
+                float(h.x),
+                float(h.y),
+                float(radius),
+            ))
+        return humans
+
+    def _log_human_source_rows(self, file_key, humans, signature_attr):
+        # Keep latest values even before a goal starts, but write CSV rows only
+        # during an active run unless explicitly requested.
+        should_log = (self.active and not self.finished) or self.log_human_sources_when_inactive
+        if not should_log:
+            return
+
+        signature = tuple(
+            (pid, round(x, 4), round(y, 4), round(r, 4))
+            for pid, x, y, r in humans
+        )
+
+        if signature == getattr(self, signature_attr):
+            return
+
+        t = self.now_rel()
+        for pid, x, y, r in humans:
+            self.writers[file_key].writerow([t, pid, x, y, r])
+
+        self.files[file_key].flush()
+        setattr(self, signature_attr, signature)
+
+    def gt_humans_callback(self, msg):
+        self.latest_gt_humans = self._humanarray_to_list(msg)
+        self._log_human_source_rows(
+            "gt_humans",
+            self.latest_gt_humans,
+            "last_gt_humans_signature"
+        )
+
+    def detected_humans_callback(self, msg):
+        self.latest_detected_humans = self._humanarray_to_list(msg)
+        self._log_human_source_rows(
+            "detected_humans",
+            self.latest_detected_humans,
+            "last_detected_humans_signature"
         )
 
     def predicted_people_callback(self, msg):
@@ -389,6 +502,17 @@ class ExperimentLogger:
 
         self.files["predicted_human_uncertainty"].flush()
         self.last_predicted_people_uncertainty_signature = signature
+
+
+    def timing_callback(self, msg, metric_name):
+        if not self.active:
+            return
+        value = float(msg.data)
+        if metric_name not in self.timing_stats:
+            self.timing_stats[metric_name] = []
+        self.timing_stats[metric_name].append(value)
+        self.writers["timing"].writerow([self.now_rel(), metric_name, value])
+        self.files["timing"].flush()
 
     def mpc_solve_time_callback(self, msg):
         if not self.active:
@@ -583,6 +707,23 @@ class ExperimentLogger:
             return None
         return value
 
+
+    def build_timing_summary(self):
+        summary = {}
+        for metric, values in self.timing_stats.items():
+            if not values:
+                continue
+            vals = [float(v) for v in values if math.isfinite(float(v))]
+            if not vals:
+                continue
+            summary[metric] = {
+                "count": len(vals),
+                "mean": sum(vals) / len(vals),
+                "min": min(vals),
+                "max": max(vals),
+            }
+        return summary
+
     def write_summary(self, reason="running"):
         duration = None
         if self.start_time is not None:
@@ -603,6 +744,12 @@ class ExperimentLogger:
             "robot_radius": self.robot_radius,
             "collision_margin": self.collision_margin,
             "num_static_obstacles": len(self.latest_obstacles),
+            "planner_human_source": self.planner_human_source,
+            "gt_humans_topic": self.gt_humans_topic,
+            "detected_humans_topic": self.detected_humans_topic,
+            "predicted_people_topic": self.predicted_people_topic,
+            "num_gt_humans_latest": len(self.latest_gt_humans),
+            "num_detected_humans_latest": len(self.latest_detected_humans),
             "static_obstacles": [
                 {"id": i, "x": ox, "y": oy, "radius": r}
                 for i, (ox, oy, r) in enumerate(self.latest_obstacles)
@@ -618,6 +765,7 @@ class ExperimentLogger:
             "mpc_solve_time_max": max(self.mpc_solve_times) if self.mpc_solve_times else None,
             "replan_cycle_time_mean": sum(self.replan_cycle_times) / len(self.replan_cycle_times) if self.replan_cycle_times else None,
             "replan_cycle_time_max": max(self.replan_cycle_times) if self.replan_cycle_times else None,
+            "timing_summary": self.build_timing_summary(),
         }
         with open(os.path.join(self.run_dir, "summary_live.json"), "w") as f:
             json.dump(summary, f, indent=4)

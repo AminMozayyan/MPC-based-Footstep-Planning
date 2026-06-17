@@ -170,7 +170,7 @@ def create_animation(
         "grid": "#D5DBDB",
     }
 
-    fig, ax = plt.subplots(figsize=(8.2, 8.2), dpi=140)
+    fig, ax = plt.subplots(figsize=(10, 10), dpi=200)
     fig.patch.set_facecolor("white")
 
     def update(frame_no):

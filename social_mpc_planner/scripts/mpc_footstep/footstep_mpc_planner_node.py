@@ -46,7 +46,7 @@ class FootstepMPCPlanner:
         self.min_step_x = -0.15
         self.max_step_x = 0.18
 
-        self.max_yaw_step = 0.08
+        self.max_yaw_step = 0.07
 
         self.Q_goal = 80.0
         # Soft terminal weight for the desired final heading.
@@ -156,11 +156,13 @@ class FootstepMPCPlanner:
             for _ in range(self.max_people)
         ]
 
+        self.predicted_people_topic = rospy.get_param("~predicted_people_topic", "/predicted_people")
         self.predicted_people_sub = rospy.Subscriber(
-            "/predicted_people",
+            self.predicted_people_topic,
             PredictedPeople,
             self.predicted_people_callback
         )
+        rospy.loginfo("MPC dynamic obstacle prediction topic: %s", self.predicted_people_topic)
 
         # Adaptive MPC horizon parameters
         # N is the prediction / optimization horizon and is updated at every replanning cycle.
@@ -203,6 +205,9 @@ class FootstepMPCPlanner:
         self.goal_tolerance = 0.1
         self.goal_yaw_tolerance = math.radians(10.0)
         self.max_replan_cycles = 100
+        self.retry_after_mpc_failure = rospy.get_param("~retry_after_mpc_failure", True)
+        self.max_consecutive_mpc_failures = int(rospy.get_param("~max_consecutive_mpc_failures", 3))
+        self.consecutive_mpc_failures = 0
         self.replan_count = 0
         self.is_walking = False
         self.active_goal = False
@@ -228,6 +233,7 @@ class FootstepMPCPlanner:
         self.goal_received = True
         self.active_goal = True
         self.replan_count = 0
+        self.consecutive_mpc_failures = 0
         self.progress_history.clear()
         self.last_replan_start_x = None
         self.last_replan_start_y = None
@@ -732,6 +738,7 @@ class FootstepMPCPlanner:
             sol = opti.solve()
             solve_time = (rospy.Time.now() - t0).to_sec()
             rospy.loginfo("MPC solve time: %.3f", solve_time)
+            self.consecutive_mpc_failures = 0
             self.mpc_solve_time_pub.publish(Float32(solve_time))
 
             footsteps = []
@@ -860,6 +867,25 @@ class FootstepMPCPlanner:
         except RuntimeError as e:
             rospy.logwarn("Footstep MPC failed: %s", str(e))
             self.planner_status_pub.publish(String("mpc_failed"))
+            self.consecutive_mpc_failures += 1
+
+            if (
+                self.retry_after_mpc_failure and
+                self.active_goal and
+                self.consecutive_mpc_failures <= self.max_consecutive_mpc_failures and
+                not rospy.is_shutdown()
+            ):
+                rospy.logwarn(
+                    "Retrying MPC after failure (%d/%d)...",
+                    self.consecutive_mpc_failures,
+                    self.max_consecutive_mpc_failures
+                )
+                rospy.sleep(0.5)
+                self.plan_footsteps()
+            elif self.consecutive_mpc_failures > self.max_consecutive_mpc_failures:
+                rospy.logwarn("Maximum consecutive MPC failures reached. Stopping active goal.")
+                self.active_goal = False
+                self.planner_status_pub.publish(String("mpc_failed_max_retries"))
 
     def print_footsteps(self, footsteps):
         rospy.loginfo("Generated footsteps:")
@@ -895,12 +921,6 @@ class FootstepMPCPlanner:
         if not self.odom_received:
             self.obstacles = obstacles[:self.max_obstacles]
 
-        rospy.loginfo_throttle(
-            2.0,
-            "Received %d static obstacles; MPC will use up to %d nearest obstacles",
-            len(self.all_static_obstacles),
-            self.max_obstacles
-        )
 
     def select_nearest_static_obstacles(self):
         """
