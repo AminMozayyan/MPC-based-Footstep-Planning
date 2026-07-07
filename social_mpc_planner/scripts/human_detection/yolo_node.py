@@ -26,9 +26,9 @@ class HumanTrackerDepthNode:
         rospy.init_node("human_tracker_depth_node")
 
         self.bridge = CvBridge()
-        self.yolo_model_path = rospy.get_param("~yolo_model_path", "yolov8n.pt")
+        self.yolo_model_path = rospy.get_param("~yolo_model_path", "yolov8m.pt")
         self.model = YOLO(self.yolo_model_path)
-        self.conf_threshold = float(rospy.get_param("~confidence_threshold", 0.5))
+        self.conf_threshold = float(rospy.get_param("~confidence_threshold", 0.2))
 
         self.rgb_frame = None
         self.depth_frame = None
@@ -428,12 +428,23 @@ class HumanTrackerDepthNode:
                     cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
                     cv2.circle(frame, (cx, cy), 5, (0, 0, 255), -1)
 
-                    label = f"human_{track_id}"
+                    cls = int(box.cls[0])
+                    class_name = self.model.names[cls]
+
+                    # Rename some COCO class names for display
+                    display_names = {
+                        "dining table": "table",
+                        "tv": "computer"
+                    }
+
+                    class_name = display_names.get(class_name, class_name)
+
+                    label = f"{class_name} ({conf:.2f})"
 
                     cv2.putText(
                         frame,
                         label,
-                        (x1, y1 - 10),
+                        (x1, max(20, y1 - 10)),
                         cv2.FONT_HERSHEY_SIMPLEX,
                         0.6,
                         (0, 255, 0),

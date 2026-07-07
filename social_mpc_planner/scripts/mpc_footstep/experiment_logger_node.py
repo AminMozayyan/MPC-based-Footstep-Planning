@@ -32,6 +32,7 @@ from datetime import datetime
 import rospy
 from nav_msgs.msg import Odometry
 from geometry_msgs.msg import PoseStamped, PointStamped, PolygonStamped
+from visualization_msgs.msg import MarkerArray
 from std_msgs.msg import Float32, Int32, Bool, String
 from tf.transformations import euler_from_quaternion
 
@@ -98,6 +99,8 @@ class ExperimentLogger:
         self.last_predicted_people_signature = None
         self.last_predicted_people_uncertainty_signature = None
         self.last_logged_obstacles_signature = None
+        self.last_generated_footsteps_world_signature = None
+        self.generated_footstep_plan_id = 0
 
         self.latest_zmp = None
         self.latest_dcm = None
@@ -141,6 +144,11 @@ class ExperimentLogger:
         rospy.Subscriber("/evaluation/replan_cycle_time", Float32, self.replan_cycle_time_callback)
         rospy.Subscriber("/evaluation/executed_footsteps_count", Int32, self.executed_footsteps_callback)
         rospy.Subscriber("/evaluation/generated_footsteps_count", Int32, self.generated_footsteps_callback)
+        rospy.Subscriber(
+            "/evaluation/generated_footsteps_world",
+            MarkerArray,
+            self.generated_footsteps_world_callback
+        )
         rospy.Subscriber("/evaluation/goal_reached", Bool, self.goal_reached_callback)
         rospy.Subscriber("/evaluation/planner_status", String, self.planner_status_callback)
 
@@ -198,6 +206,7 @@ class ExperimentLogger:
             "predicted_human_uncertainty": ["t", "person_id", "pred_step", "sigma_x", "sigma_y", "rho"],
             "events": ["t", "event", "details"],
             "static_obstacles": ["t", "obstacle_id", "x", "y", "radius"],
+            "generated_footsteps_world": ["t", "plan_id", "step_index", "foot", "x", "y", "theta"],
             "timing": ["t", "metric", "value"],
         }
         for name, header in specs.items():
@@ -260,6 +269,8 @@ class ExperimentLogger:
         self.last_detected_humans_signature = None
         self.last_predicted_people_signature = None
         self.last_predicted_people_uncertainty_signature = None
+        self.last_generated_footsteps_world_signature = None
+        self.generated_footstep_plan_id = 0
 
         self.write_event("new_goal", json.dumps({"goal_x": self.goal[0], "goal_y": self.goal[1]}))
         rospy.loginfo("Experiment logging started for goal x=%.3f y=%.3f", self.goal[0], self.goal[1])
@@ -545,6 +556,80 @@ class ExperimentLogger:
         self.total_generated_footsteps += value
         self.writers["planner"].writerow([self.now_rel(), "generated_footsteps_count", value])
         self.files["planner"].flush()
+
+    def generated_footsteps_world_callback(self, msg):
+        """
+        Log the full MPC-generated footstep horizon in the global odom frame.
+
+        The planner publishes these footsteps as a MarkerArray on
+        /evaluation/generated_footsteps_world. Each callback corresponds to one
+        replanning solution. The resulting CSV can be used later to overlay
+        planned footsteps on trajectory plots or animation frames.
+        """
+        if not self.active or self.finished:
+            return
+
+        rows = []
+
+        for marker in msg.markers:
+            if marker.action != marker.ADD:
+                continue
+            if marker.ns != "generated_footsteps_world":
+                continue
+
+            q = marker.pose.orientation
+            _, _, theta = euler_from_quaternion([q.x, q.y, q.z, q.w])
+
+            foot = marker.text
+            if foot not in ("L", "R"):
+                foot = "unknown"
+
+            rows.append((
+                int(marker.id),
+                foot,
+                float(marker.pose.position.x),
+                float(marker.pose.position.y),
+                float(theta),
+            ))
+
+        if len(rows) == 0:
+            return
+
+        rows.sort(key=lambda item: item[0])
+
+        signature = tuple(
+            (idx, foot, round(x, 4), round(y, 4), round(theta, 4))
+            for idx, foot, x, y, theta in rows
+        )
+
+        if signature == self.last_generated_footsteps_world_signature:
+            return
+
+        t = self.now_rel()
+        plan_id = self.generated_footstep_plan_id
+
+        for idx, foot, x, y, theta in rows:
+            self.writers["generated_footsteps_world"].writerow([
+                t,
+                plan_id,
+                idx,
+                foot,
+                x,
+                y,
+                theta,
+            ])
+
+        self.files["generated_footsteps_world"].flush()
+        self.last_generated_footsteps_world_signature = signature
+        self.generated_footstep_plan_id += 1
+
+        self.write_event(
+            "generated_footsteps_world_logged",
+            json.dumps({
+                "plan_id": plan_id,
+                "num_footsteps": len(rows),
+            })
+        )
 
     def planner_status_callback(self, msg):
         if not self.active:

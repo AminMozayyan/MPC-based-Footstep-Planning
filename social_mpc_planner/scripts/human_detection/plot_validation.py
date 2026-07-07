@@ -262,30 +262,30 @@ plt.axis("equal")
 #     plt.grid()
 
 
-# # -------------------------------------------------
-# # Histograms
-# # -------------------------------------------------
+# -------------------------------------------------
+# Histograms
+# -------------------------------------------------
 
-# if len(df_det) > 0:
+if len(df_det) > 0:
 
-#     plt.figure(figsize=(6, 4))
-#     plt.hist(df_det["distance_error"].dropna(), bins=30)
-#     plt.xlabel("Error [m]")
-#     plt.ylabel("Count")
-#     plt.title("Error Histogram")
-#     plt.grid()
+    plt.figure(figsize=(6, 4))
+    plt.hist(df_det["distance_error"].dropna(), bins=30)
+    plt.xlabel("Error [m]")
+    plt.ylabel("Count")
+    plt.title("Error Histogram")
+    plt.grid()
 
-#     plt.figure(figsize=(6, 4))
-#     plt.hist(df_det["dx"].dropna(), bins=40)
-#     plt.title("X Error Distribution")
-#     plt.xlabel("dx [m]")
-#     plt.grid()
+    plt.figure(figsize=(6, 4))
+    plt.hist(df_det["dx"].dropna(), bins=40)
+    plt.title("X Error Distribution")
+    plt.xlabel("dx [m]")
+    plt.grid()
 
-#     plt.figure(figsize=(6, 4))
-#     plt.hist(df_det["dy"].dropna(), bins=40)
-#     plt.title("Y Error Distribution")
-#     plt.xlabel("dy [m]")
-#     plt.grid()
+    plt.figure(figsize=(6, 4))
+    plt.hist(df_det["dy"].dropna(), bins=40)
+    plt.title("Y Error Distribution")
+    plt.xlabel("dy [m]")
+    plt.grid()
 
 
 # # -------------------------------------------------

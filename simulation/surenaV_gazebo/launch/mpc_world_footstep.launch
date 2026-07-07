@@ -56,7 +56,7 @@
  <!-- Abilation Study scenarios -->
 
 
-   <!-- <node name="spawn_person_2" pkg="gazebo_ros" type="spawn_model"
+   <node name="spawn_person_2" pkg="gazebo_ros" type="spawn_model"
         args="-file $(find surenaV_gazebo)/models/human_actor/model.sdf -sdf -model person_2 -x 4.0 -y -2.5 -z 0.0"/>
 
   <node name="spawn_person_1" pkg="gazebo_ros" type="spawn_model"
@@ -77,20 +77,23 @@
         args="-file $(find social_mpc_planner)/models/cylinder_obstacle/model.sdf -sdf -model obstacle_4 -x 0 -y 3 -z 0.5"/>
 
   <node name="spawn_obstacle_5" pkg="gazebo_ros" type="spawn_model"
-        args="-file $(find social_mpc_planner)/models/cylinder_obstacle/model.sdf -sdf -model obstacle_5 -x 4 -y 1.5 -z 0.5"/> -->
+        args="-file $(find social_mpc_planner)/models/cylinder_obstacle/model.sdf -sdf -model obstacle_5 -x 4 -y 1.5 -z 0.5"/>
+ 
+ 
+
  
  
  
- 
- 
-  <node name="spawn_person_1" pkg="gazebo_ros" type="spawn_model"
+  <!-- <node name="spawn_person_1" pkg="gazebo_ros" type="spawn_model"
         args="-file $(find surenaV_gazebo)/models/human_actor/model.sdf -sdf -model person_1 -x 2 -y 1.2 -z 0.0"/> 
 
   <node name="spawn_person_2" pkg="gazebo_ros" type="spawn_model"
         args="-file $(find surenaV_gazebo)/models/human_actor/model.sdf -sdf -model person_2 -x 5.0 -y -3 -z 0.0"/>
 
   <node name="spawn_person_3" pkg="gazebo_ros" type="spawn_model"
-        args="-file $(find surenaV_gazebo)/models/human_actor/model.sdf -sdf -model person_3 -x 1.5 -y -2.0 -z 0.0"/>  
+        args="-file $(find surenaV_gazebo)/models/human_actor/model.sdf -sdf -model person_3 -x 1.5 -y -2.0 -z 0.0"/>   -->
+
+
 
 
   <!-- <node name="spawn_person_4" pkg="gazebo_ros" type="spawn_model"
@@ -101,7 +104,7 @@
 
 
 
-  <node name="spawn_obstacle_1" pkg="gazebo_ros" type="spawn_model"
+  <!-- <node name="spawn_obstacle_1" pkg="gazebo_ros" type="spawn_model"
         args="-file $(find social_mpc_planner)/models/cylinder_obstacle/model.sdf -sdf -model obstacle_1 -x 4 -y -1.5 -z 0.5"/>
 
   <node name="spawn_obstacle_2" pkg="gazebo_ros" type="spawn_model"
@@ -114,7 +117,10 @@
         args="-file $(find social_mpc_planner)/models/cylinder_obstacle/model.sdf -sdf -model obstacle_4 -x 0 -y 3 -z 0.5"/>
 
   <node name="spawn_obstacle_5" pkg="gazebo_ros" type="spawn_model"
-        args="-file $(find social_mpc_planner)/models/cylinder_obstacle/model.sdf -sdf -model obstacle_5 -x 4 -y 1.5 -z 0.5"/>
+        args="-file $(find social_mpc_planner)/models/cylinder_obstacle/model.sdf -sdf -model obstacle_5 -x 4 -y 1.5 -z 0.5"/> -->
+
+
+
 
   <!-- <node name="spawn_obstacle_4" pkg="gazebo_ros" type="spawn_model"
         args="-file $(find social_mpc_planner)/models/cylinder_obstacle/model.sdf -sdf -model obstacle_4 -x 0.0 -y -2.5 -z 0.5"/> -->
@@ -183,10 +189,10 @@
     <param name="device" value="cpu"/>
 
     <rosparam param="humans">
-      - {id: 1, model_name: person_1, ax: 2.0,  ay: 1.5,  bx: 2.0, by: -10.0,  speed: 0.025, radius: 0.3, yaw_offset: 1.5708}
-      - {id: 2, model_name: person_2, ax: 5.5,  ay: -3.0,  bx: 5.5, by: 10.0, speed: 0.05, radius: 0.3, yaw_offset: 1.5708}
-      - {id: 3, model_name: person_3, ax: 1.5,  ay: -0.5,  bx: 10.0, by: 6.0,  speed: 0.04, radius: 0.3, yaw_offset: 1.5708}
+      - {id: 1, model_name: person_1, ax: 1.0,  ay: -1.0,  bx: 6.45, by: 1.57,  speed: 0.03, radius: 0.3, yaw_offset: 1.5708}
+      - {id: 2, model_name: person_2, ax: 5.0,  ay: -3.0,  bx: 5.0, by: 3.0, speed: 0.03, radius: 0.3, yaw_offset: 1.5708}
       <!-- - {id: 4, model_name: person_4, ax: 4.5,  ay: 2.0,  bx: 4.0,  by: -15.0, speed: 0.03, radius: 0.25, yaw_offset: 1.5708}
+      - {id: 3, model_name: person_3, ax: 1.5,  ay: -0.5,  bx: 10.0, by: 6.0,  speed: 0.04, radius: 0.3, yaw_offset: 1.5708}
       - {id: 5, model_name: person_5, ax: 0.0, ay: -2.4, bx: 15.0, by: -2.0,  speed: 0.045, radius: 0.25, yaw_offset: 1.5708} -->
     </rosparam>
   </node>

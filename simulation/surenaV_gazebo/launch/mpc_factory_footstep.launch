@@ -33,9 +33,9 @@
     <arg name="headless" value="$(arg headless)"/>
   </include>
 
-  <node pkg="tf" type="static_transform_publisher"
+  <!-- <node pkg="tf" type="static_transform_publisher"
         name="odom_to_world"
-        args="0 0 0 0 0 0 odom world 100"/>
+        args="0 0 0 0 0 0 odom world 100"/> -->
 
   <!-- Load URDF -->
   <param name="robot_description"
@@ -44,7 +44,7 @@
   <!-- Spawn robot -->
   <node name="urdf_spawner" pkg="gazebo_ros" type="spawn_model"
         respawn="false" output="screen"
-        args="-urdf -model surenaV -param robot_description -x 5.0 -y -1.0 -z 0.0 -Y 3.1415"/>
+        args="-urdf -model surenaV -param robot_description -x 0.0 -y 0.0 -z 0.0"/>
 
   <!-- Spawn humans -->
   <node name="spawn_person_1" pkg="gazebo_ros" type="spawn_model"
@@ -81,7 +81,7 @@
     <param name="max_consecutive_outliers" value="3"/>
     <param name="smoothing_alpha" value="0.5"/>
     <param name="yolo_model_path"
-       value="/home/mozayyan/Surena_ws/yolov8n.pt"/>
+       value="/home/mozayyan/Surena_ws/yolov8m.pt"/>
     <rosparam param="human_model_keywords">[person, human, actor]</rosparam>
   </node>
 
@@ -132,12 +132,12 @@
   </node>
 
   <!-- Odom TF publisher -->
-  <node pkg="social_mpc_planner"
+  <!-- <node pkg="social_mpc_planner"
         type="gazebo_odom_publisher.py"
         name="gazebo_odom_publisher"
         output="screen">
     <param name="robot_name" value="surenaV"/>
-  </node>
+  </node> -->
 
   <!-- Navigation evaluation logger -->
   <node name="navigation_experiment_logger_node"

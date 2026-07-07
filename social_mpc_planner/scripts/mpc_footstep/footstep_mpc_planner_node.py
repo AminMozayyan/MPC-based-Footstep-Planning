@@ -86,6 +86,15 @@ class FootstepMPCPlanner:
 
         self.marker_pub = rospy.Publisher("/footstep_markers", MarkerArray, queue_size=10)
 
+        # Publish the optimized/generated footsteps in the global odom frame so
+        # the experiment logger can store them for offline plots and videos.
+        # These are the full MPC horizon footsteps, not only the executed batch.
+        self.generated_footsteps_world_pub = rospy.Publisher(
+            "/evaluation/generated_footsteps_world",
+            MarkerArray,
+            queue_size=10
+        )
+
         # Experiment/evaluation topics. These are intentionally simple std_msgs
         # so the logger can be used without defining new custom messages.
         self.mpc_solve_time_pub = rospy.Publisher("/evaluation/mpc_solve_time", Float32, queue_size=10)
@@ -166,8 +175,8 @@ class FootstepMPCPlanner:
 
         # Adaptive MPC horizon parameters
         # N is the prediction / optimization horizon and is updated at every replanning cycle.
-        self.min_prediction_steps = 26
-        self.max_prediction_steps = 26
+        self.min_prediction_steps = 16
+        self.max_prediction_steps = 16
         self.nominal_step_length = 0.16
         self.prediction_margin_steps = 3
         self.N = self.max_prediction_steps
@@ -812,6 +821,7 @@ class FootstepMPCPlanner:
 
             self.print_footsteps(exec_footsteps)
             self.publish_markers(world_footsteps)
+            self.publish_generated_footsteps_world(world_footsteps)
 
             self.executed_footsteps_pub.publish(Int32(len(exec_footsteps)))
             replan_cycle_time = (rospy.Time.now() - replan_cycle_start_time).to_sec()
@@ -970,6 +980,64 @@ class FootstepMPCPlanner:
             len(self.all_static_obstacles),
             nearest_clearance,
             self.obstacle_selection_radius
+        )
+
+    def publish_generated_footsteps_world(self, footsteps):
+        """
+        Publish generated MPC footsteps in the global odom frame.
+
+        The gait planner still receives local-frame footsteps through
+        write_walk_config(). This publisher is only for logging, plotting and
+        video rendering. Each marker contains:
+          - pose.position.x/y: footstep position in odom/world frame
+          - pose.orientation: footstep yaw in odom/world frame
+          - id: step index inside the optimized horizon
+          - text: foot side ("L" or "R")
+        """
+        markers = MarkerArray()
+        now = rospy.Time.now()
+
+        for i, fs in enumerate(footsteps):
+            marker = Marker()
+            marker.header.frame_id = "odom"
+            marker.header.stamp = now
+            marker.ns = "generated_footsteps_world"
+            marker.id = i
+            marker.type = Marker.CUBE
+            marker.action = Marker.ADD
+
+            marker.pose.position.x = float(fs["x"])
+            marker.pose.position.y = float(fs["y"])
+            marker.pose.position.z = 0.02
+
+            q = quaternion_from_euler(0.0, 0.0, float(fs["theta"]))
+            marker.pose.orientation.x = q[0]
+            marker.pose.orientation.y = q[1]
+            marker.pose.orientation.z = q[2]
+            marker.pose.orientation.w = q[3]
+
+            marker.scale.x = 0.22
+            marker.scale.y = 0.10
+            marker.scale.z = 0.02
+
+            if fs["foot"] == "L":
+                marker.color.r = 0.0
+                marker.color.g = 0.2
+                marker.color.b = 1.0
+            else:
+                marker.color.r = 1.0
+                marker.color.g = 0.2
+                marker.color.b = 0.0
+
+            marker.color.a = 0.9
+            marker.text = fs["foot"]
+            markers.markers.append(marker)
+
+        self.generated_footsteps_world_pub.publish(markers)
+
+        rospy.loginfo(
+            "Published %d generated footsteps in odom frame for logging.",
+            len(footsteps)
         )
 
     def publish_markers(self, footsteps):
