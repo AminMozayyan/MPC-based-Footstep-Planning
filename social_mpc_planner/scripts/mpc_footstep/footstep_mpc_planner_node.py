@@ -71,7 +71,7 @@ class FootstepMPCPlanner:
         self.foot_clearance = 0.7
         self.enable_static_obstacles = True
         self.enable_dynamic_obstacles = True
-        self.W_backward = 500.0
+        self.W_backward = 300.0
         self.W_obs_slack = 150000.0
         self.W_human_slack = 100000.0
 

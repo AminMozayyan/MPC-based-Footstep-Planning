@@ -136,9 +136,9 @@ void Robot::spinOnline(double config[], double jnt_vel[], Vector3d torque_r, Vec
             bumpSensorCalibrated_ = true;
             // runFootLenController(f_l, f_r, robot_cs);
 
-            runBumpFootOrientController(bump_r, bump_l);
+            //runBumpFootOrientController(bump_r, bump_l);
 
-            runEarlyContactController(bump_r, bump_l);
+            //runEarlyContactController(bump_r, bump_l);
 
             // runZMPAdmitanceController();
         }

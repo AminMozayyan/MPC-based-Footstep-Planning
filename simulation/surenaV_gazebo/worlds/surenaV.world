@@ -52,7 +52,7 @@
       </link>
     </model>
 
-    <!-- South -->
+    South 
     <model name="wall_south">
       <static>true</static>
       <pose>0 -6 1 0 0 0</pose>
@@ -74,7 +74,7 @@
       </link>
     </model>
 
-    <!-- East -->
+    East 
     <model name="wall_east">
       <static>true</static>
       <pose>6 0 1 0 0 0</pose>
@@ -96,7 +96,7 @@
       </link>
     </model>
 
-    <!-- West -->
+    West 
     <model name="wall_west">
       <static>true</static>
       <pose>-6 0 1 0 0 0</pose>
