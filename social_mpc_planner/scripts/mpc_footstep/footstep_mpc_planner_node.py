@@ -127,7 +127,11 @@ class FootstepMPCPlanner:
         }
 
         self.step_time = 1.0
-        self.human_prediction_dt = 0.5
+        self.human_prediction_dt = 0.4
+        self.prediction_stamp = None
+        self.prediction_validity_sec = float(rospy.get_param("~prediction_validity_sec", 0.8))
+        self.prediction_extrapolation_policy = rospy.get_param("~prediction_extrapolation_policy", "skip")
+        self.last_horizon_warning = False
 
         self.max_people = 3
 
@@ -219,7 +223,9 @@ class FootstepMPCPlanner:
         self.consecutive_mpc_failures = 0
         self.replan_count = 0
         self.is_walking = False
+        self.waiting_for_prediction = False
         self.active_goal = False
+        self.retry_timer = rospy.Timer(rospy.Duration(0.25), self._retry_pending_goal)
 
     def odom_callback(self, msg):
         self.x = msg.pose.pose.position.x
@@ -241,6 +247,7 @@ class FootstepMPCPlanner:
 
         self.goal_received = True
         self.active_goal = True
+        self.waiting_for_prediction = True
         self.replan_count = 0
         self.consecutive_mpc_failures = 0
         self.progress_history.clear()
@@ -260,6 +267,19 @@ class FootstepMPCPlanner:
         # from the current odometry at every replanning cycle.
         if self.odom_received:
             self.plan_footsteps()
+
+    def _retry_pending_goal(self, event):
+        """Resume a goal held for missing/stale prediction, without requiring another RViz click."""
+        if not self.waiting_for_prediction or not self.active_goal or self.is_walking:
+            return
+        if not self.odom_received or self.prediction_stamp is None:
+            return
+        age = (rospy.Time.now() - self.prediction_stamp).to_sec()
+        if age < 0 or age > self.prediction_validity_sec:
+            return
+        self.waiting_for_prediction = False
+        rospy.loginfo("Fresh prediction arrived; retrying pending goal")
+        self.plan_footsteps()
 
     def distance_to_goal(self):
         dx = self.gx - self.x
@@ -440,6 +460,7 @@ class FootstepMPCPlanner:
         return margin
         
     def predicted_people_callback(self, msg):
+        self.prediction_stamp = msg.header.stamp
         if msg.dt > 1e-6:
             self.human_prediction_dt = msg.dt
 
@@ -537,27 +558,36 @@ class FootstepMPCPlanner:
         local_people = []
 
         if self.enable_dynamic_obstacles:
+            if self.prediction_stamp is None or (rospy.Time.now() - self.prediction_stamp).to_sec() > self.prediction_validity_sec:
+                rospy.logwarn("No fresh human prediction: refusing unsafe MPC solve")
+                self.planner_status_pub.publish(String("human_prediction_stale"))
+                self.waiting_for_prediction = True
+                return
+            self.waiting_for_prediction = False
             for person in self.predicted_people[:self.max_people]:
                 traj_l = []
                 traj = person["trajectory"]
 
+                # Each predicted position index j represents stamp + j * dt.
+                # Use interpolation; never silently treat index as MPC time.
+                prediction_age = max(0.0, (rospy.Time.now() - self.prediction_stamp).to_sec())
                 for k in range(N):
-                    t_k = k * self.step_time
-                    human_index = int(round(t_k / self.human_prediction_dt))
-
-                    if human_index >= len(traj):
-                        human_index = len(traj) - 1
-
-                    hx, hy = traj[human_index]
-
-                    hx_l, hy_l = self.world_to_local(
-                        hx, hy,
-                        x_start, y_start, th_start
-                    )
-
+                    t_k = prediction_age + (k + 1) * self.step_time
+                    u = t_k / self.human_prediction_dt
+                    if u > len(traj) - 1:
+                        if self.prediction_extrapolation_policy == "skip":
+                            traj_l.append(None)
+                            continue
+                        else:
+                            rospy.logwarn_throttle(5.0, "Holding last observed forecast beyond 4.8s (not true prediction)")
+                            u = len(traj) - 1
+                    lo = int(math.floor(u))
+                    hi = min(lo + 1, len(traj) - 1)
+                    r = u - lo
+                    hx = (1-r)*traj[lo][0] + r*traj[hi][0]
+                    hy = (1-r)*traj[lo][1] + r*traj[hi][1]
+                    hx_l, hy_l = self.world_to_local(hx, hy, x_start, y_start, th_start)
                     traj_l.append((hx_l, hy_l))
-
-
 
                 local_people.append({
                     "id": person["id"],
@@ -565,6 +595,8 @@ class FootstepMPCPlanner:
                     "trajectory": traj_l
                 })
 
+        if self.enable_dynamic_obstacles and (N * self.step_time > self.human_prediction_dt * 12):
+            rospy.logwarn_throttle(5.0, "MPC 16s horizon exceeds pedestrian forecast 4.8s; dynamic constraints beyond forecast skipped. NOT safe as a full-horizon collision guarantee.")
         opti = ca.Opti()
 
         X = opti.variable(N)
@@ -657,6 +689,7 @@ class FootstepMPCPlanner:
                     human_state = person["trajectory"][k]
 
                     if human_state is None:
+                        opti.subject_to(S_human[h, k] == 0.0)
                         continue
 
                     hx, hy = human_state

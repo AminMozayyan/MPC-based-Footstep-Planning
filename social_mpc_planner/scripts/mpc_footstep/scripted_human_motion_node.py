@@ -8,10 +8,11 @@ import copy
 import importlib
 import time
 from collections import deque
+from threading import Lock
 
 import numpy as np
 import rospy
-from gazebo_msgs.msg import ModelState
+from gazebo_msgs.msg import ModelStates, ModelState
 from gazebo_msgs.srv import SetModelState
 from visualization_msgs.msg import Marker, MarkerArray
 from geometry_msgs.msg import Pose2D, Point
@@ -268,6 +269,7 @@ class SocialSTGCNNPredictor:
         )
         
         if (not self.enabled) or num_people < 2:
+            raise RuntimeError("Learned prediction unavailable: disabled or fewer than two people")
             out = self._constant_velocity_fallback(obs_xy, publish_horizon)
             # No learned covariance is available in fallback mode.
             # Publish small zero uncertainty arrays with the same temporal length.
@@ -386,16 +388,23 @@ class ScriptedMultiHumanMotionNode:
         self.default_z = rospy.get_param("~z", 0.0)
         self.marker_frame = rospy.get_param("~marker_frame", "odom")
         self.prediction_frame = rospy.get_param("~prediction_frame", "odom")
-        self.dt_pred = float(rospy.get_param("~prediction_dt", 0.5))
+        self.dt_pred = float(rospy.get_param("~prediction_dt", 0.4))
         self.n_pred = int(rospy.get_param("~prediction_horizon", 12))
         self.rate_hz = float(rospy.get_param("~rate", 20.0))
-        self.publish_before_history_full = bool(rospy.get_param("~publish_before_history_full", True))
+        self.publish_before_history_full = False
 
         # Select where the observation history for prediction comes from.
         #   gt              : use the internally scripted Gazebo humans (old behavior)
         #   detection       : use /detected_humans_world published by yolo_node
         #   gazebo_topic    : use /gazebo_humans_world published by yolo_node
-        self.human_source = str(rospy.get_param("~human_source", "gt")).lower()
+        self.human_source = str(rospy.get_param("~human_source", "gazebo_model_states")).lower()
+        self.prediction_source = str(rospy.get_param("~prediction_source", "learned")).lower()
+        if self.prediction_source not in ("learned", "ground_truth"):
+            raise ValueError("~prediction_source must be learned or ground_truth")
+        self.gazebo_model_states_topic = rospy.get_param("~gazebo_model_states_topic", "/gazebo/model_states")
+        self.person_prefix = rospy.get_param("~person_prefix", "person_")
+        self.gazebo_people = {}
+        self.gazebo_people_stamp = None
         self.detected_humans_topic = rospy.get_param("~detected_humans_topic", "/detected_humans_world")
         self.gazebo_humans_topic = rospy.get_param("~gazebo_humans_topic", "/gazebo_humans_world")
         self.gt_humans_topic = rospy.get_param("~gt_humans_topic", self.gazebo_humans_topic)
@@ -420,12 +429,32 @@ class ScriptedMultiHumanMotionNode:
 
         self.humans = [ScriptedHuman(cfg, self.default_radius, self.default_z) for cfg in humans_cfg]
         self.humans_by_id = {int(h.id): h for h in self.humans}
+        # The learned predictor is loaded only when selected, avoiding unnecessary checkpoint loads.
         self.predictor = SocialSTGCNNPredictor()
+        if not self.predictor.enabled:
+            raise RuntimeError("Social-STGCNN checkpoint/model failed to load; refusing CV fallback")
+        self.obs_len = int(rospy.get_param("~obs_len", 8))
 
-        self.history = deque(maxlen=self.predictor.obs_len)
+        self.history = deque(maxlen=self.obs_len)
+        self.gazebo_lock = Lock()
+        self.gazebo_buffer = deque(maxlen=5000)  # ~5 seconds at 1000 Hz
+        self.next_sample_time = None
+        self.last_prediction_time = None
         self.last_history_stamp = None
         self.active_people = []
         self.active_ids = []
+
+        # Optional reproducibility log: exact tensors passed to Social-STGCNN.
+        self.debug_save_model_io = bool(rospy.get_param("~debug_save_model_io", False))
+        self.debug_model_io_dir = os.path.expanduser(str(rospy.get_param(
+            "~debug_model_io_dir", "~/social_stgcnn_debug")))
+        self.debug_model_io_max_files = int(rospy.get_param("~debug_model_io_max_files", 150))
+        self.debug_model_io_every = max(1, int(rospy.get_param("~debug_model_io_every", 1)))
+        self.debug_model_io_calls = 0
+        self.debug_model_io_saved = 0
+        if self.debug_save_model_io:
+            os.makedirs(self.debug_model_io_dir, exist_ok=True)
+            rospy.loginfo("Social-STGCNN exact input/output logging enabled: %s", self.debug_model_io_dir)
 
         # External source used only when human_source='gazebo_topic'.
         # Detection data is stored separately because we want to visualize it in RViz
@@ -448,7 +477,12 @@ class ScriptedMultiHumanMotionNode:
         )
         rospy.loginfo("Detection marker source subscribed: %s", self.detected_humans_topic)
 
-        if self.human_source == "detection":
+        if self.human_source == "gazebo_model_states":
+            self.gazebo_sub = rospy.Subscriber(
+                self.gazebo_model_states_topic, ModelStates,
+                self.gazebo_model_states_callback, queue_size=1)
+            rospy.loginfo("Human observation source: %s", self.gazebo_model_states_topic)
+        elif self.human_source == "detection":
             # Do not create a second subscriber to the same topic.
             # _current_people() will read self.detected_humans for prediction/MPC,
             # while publish_detected_markers() uses the same data for RViz.
@@ -471,6 +505,8 @@ class ScriptedMultiHumanMotionNode:
             self.human_source = "gt"
 
         self.pred_pub = rospy.Publisher("/predicted_people", PredictedPeople, queue_size=10)
+        self.learned_pub = rospy.Publisher("/human_social_stgcnn_prediction", PredictedPeople, queue_size=10)
+        self.oracle_pub = rospy.Publisher("/human_ground_truth_future", PredictedPeople, queue_size=10)  # scripted oracle, not future measured Gazebo
         self.unc_pub = rospy.Publisher("/predicted_people_uncertainty", PredictedPeopleUncertainty, queue_size=10)
 
         # Timing / frequency diagnostics for integration analysis.
@@ -484,7 +520,9 @@ class ScriptedMultiHumanMotionNode:
 
         # Always publish raw GT HumanArray so the logger and other nodes can save it,
         # even when the planner is configured to use detections.
-        self.gt_humans_pub = rospy.Publisher(self.gt_humans_topic, HumanArray, queue_size=10)
+        self.gt_humans_pub = rospy.Publisher(
+            rospy.get_param("~scripted_gt_output_topic", "/scripted_humans_world"),
+            HumanArray, queue_size=10)
 
         # Source-based markers: these are the human positions actually used for prediction/MPC.
         self.marker_pub = rospy.Publisher("/human_obstacle_marker", Marker, queue_size=10)
@@ -543,6 +581,44 @@ class ScriptedMultiHumanMotionNode:
                 publisher.publish(Float32(1.0 / dt))
         return current_time
 
+    def gazebo_model_states_callback(self, msg):
+        people = {}
+        for index, name in enumerate(msg.name):
+            if not name.startswith(self.person_prefix):
+                continue
+            try:
+                hid = int(name[len(self.person_prefix):])
+            except ValueError:
+                continue
+            pose = msg.pose[index]
+            twist = msg.twist[index]
+            person = self.humans_by_id.get(hid)
+            people[hid] = {
+                "id": hid, "x": float(pose.position.x), "y": float(pose.position.y),
+                "vx": float(twist.linear.x), "vy": float(twist.linear.y),
+                "radius": float(person.radius) if person else float(self.default_radius),
+            }
+        stamp = rospy.Time.now().to_sec()  # ModelStates has no Header; ROS sim receive-time proxy
+        with self.gazebo_lock:
+            self.gazebo_people = people
+            self.gazebo_people_stamp = rospy.Time.from_sec(stamp)
+            if self.gazebo_buffer:
+                previous_stamp = self.gazebo_buffer[-1][0]
+                # Multiple ModelStates messages can have the same /clock timestamp.
+                # This must NOT reset the observation history.
+                if abs(stamp - previous_stamp) < 1e-9:
+                    self.gazebo_buffer[-1] = (stamp, people)
+                    return
+                if stamp < previous_stamp:
+                    # Genuine simulated-time rewind (e.g. Gazebo reset).
+                    self.gazebo_buffer.clear()
+                    self.history.clear()
+                    self.active_ids = []
+                    self.next_sample_time = None
+                    self.last_history_stamp = None
+                    rospy.logwarn("Gazebo time moved backwards; restarting observation history")
+            self.gazebo_buffer.append((stamp, people))
+
     def external_humans_callback(self, msg):
         now = rospy.Time.now()
         self.last_external_input_time = self._publish_rate_from_interval(
@@ -562,6 +638,16 @@ class ScriptedMultiHumanMotionNode:
         self.detected_humans_stamp = now
 
     def _current_people(self):
+        if self.human_source == "gazebo_model_states":
+            if self.gazebo_people_stamp is None:
+                rospy.logwarn_throttle(1.0, "Waiting for Gazebo ModelStates")
+                return None
+            if (rospy.Time.now() - self.gazebo_people_stamp).to_sec() > self.external_human_timeout:
+                rospy.logwarn_throttle(1.0, "Gazebo ModelStates stale")
+                return None
+            if not self.gazebo_people:
+                return None
+            return [self.gazebo_people[k] for k in sorted(self.gazebo_people)]
         if self.human_source == "gt":
             return [
                 {"id": int(h.id), "x": float(h.x), "y": float(h.y), "radius": float(h.radius)}
@@ -611,40 +697,77 @@ class ScriptedMultiHumanMotionNode:
     def _positions_from_people(self, people):
         return np.asarray([[p["x"], p["y"]] for p in people], dtype=np.float32)
 
+    def _gazebo_at(self, t):
+        with self.gazebo_lock:
+            b = list(self.gazebo_buffer)
+        if not b or t < b[0][0] - 1e-6 or t > b[-1][0] + 1e-6:
+            return None
+        for j in range(1, len(b)):
+            ta, a = b[j - 1]
+            tb, c = b[j]
+            if ta <= t <= tb and tb > ta:
+                if set(a) != set(c):
+                    return None
+                r = (t - ta) / (tb - ta)
+                return [{"id": hid, "x": (1-r)*a[hid]["x"]+r*c[hid]["x"],
+                         "y": (1-r)*a[hid]["y"]+r*c[hid]["y"],
+                         "radius": c[hid]["radius"]} for hid in sorted(c)]
+        return [dict(q) for _, q in sorted(b[-1][1].items())] if abs(t-b[-1][0])<1e-6 else None
+
     def _update_history(self, now):
-        people = self._current_people()
-        if people is None or len(people) == 0:
-            return False
-
-        ids = [int(p["id"]) for p in people]
-
-        # Social-STGCNN expects a fixed set and order of people over the observation window.
-        # If detection IDs appear/disappear or change order, restart the history safely.
-        if self.active_ids and ids != self.active_ids:
-            rospy.logwarn_throttle(
-                1.0,
-                "Human IDs changed from %s to %s. Clearing prediction history.",
-                str(self.active_ids),
-                str(ids)
-            )
+        with self.gazebo_lock:
+            if not self.gazebo_buffer:
+                return False
+            oldest, newest = self.gazebo_buffer[0][0], self.gazebo_buffer[-1][0]
+        if self.next_sample_time is None:
+            self.next_sample_time = oldest + self.dt_pred
+        # If Gazebo has advanced faster than this node could process, do not
+        # remain stuck requesting timestamps that have fallen out of the buffer.
+        if self.next_sample_time < oldest - 1e-6:
+            rospy.logwarn_throttle(2.0, "Gazebo buffer overrun: resynchronizing observation window")
             self.history.clear()
-            self.last_history_stamp = None
+            self.active_ids = []
+            self.next_sample_time = oldest + self.dt_pred
+        updated = False
+        while self.next_sample_time <= newest + 1e-9:
+            t = self.next_sample_time
+            people = self._gazebo_at(t)
+            self.next_sample_time += self.dt_pred
+            if not people:
+                self.history.clear()
+                self.active_ids = []
+                continue
+            ids = [int(p["id"]) for p in people]
+            if self.active_ids and ids != self.active_ids:
+                self.history.clear()
+            self.active_ids = ids
+            self.active_people = people
+            self.history.append(self._positions_from_people(people))
+            self.last_history_stamp = rospy.Time.from_sec(t)
+            updated = True
+        rospy.loginfo_throttle(
+            2.0, "Prediction history: %d/%d | Gazebo span %.3fs | next sample %.3f | updated=%s",
+            len(self.history), self.obs_len, max(0.0, newest-oldest),
+            self.next_sample_time, str(updated))
+        return updated and len(self.history) == self.obs_len
 
-        current_positions = self._positions_from_people(people)
-        self.active_people = people
-        self.active_ids = ids
-
-        if self.last_history_stamp is None:
-            self.history.append(current_positions)
-            self.last_history_stamp = now
-            return True
-
-        if (now - self.last_history_stamp).to_sec() >= self.dt_pred:
-            self.history.append(current_positions)
-            self.last_history_stamp = now
-            return True
-
-        return True
+    def build_oracle_message(self, stamp):
+        """Scripted-motion oracle; not measured future Gazebo ground truth."""
+        arr = np.zeros((self.n_pred + 1, len(self.active_people), 2), dtype=np.float32)
+        for j, p in enumerate(self.active_people):
+            h = self.humans_by_id.get(p["id"])
+            if h is None:
+                raise RuntimeError("No scripted motion definition for human %s" % p["id"])
+            clone = copy.deepcopy(h)
+            clone.x, clone.y = float(p["x"]), float(p["y"])
+            arr[0,j] = (clone.x, clone.y)
+            # Small steps for accuracy at endpoint direction switches.
+            substep = self.dt_pred / 40.0
+            for k in range(1, self.n_pred + 1):
+                for _ in range(40):
+                    clone.step(substep)
+                arr[k,j] = (clone.x, clone.y)
+        return self._build_prediction_message_from_xy(arr, stamp)
 
     def _constant_velocity_prediction_from_history(self, people):
         num_people = len(people)
@@ -690,9 +813,9 @@ class ScriptedMultiHumanMotionNode:
 
         return person
 
-    def build_uncertainty_message(self, sigma_x, sigma_y, rho):
+    def build_uncertainty_message(self, sigma_x, sigma_y, rho, stamp):
         msg = PredictedPeopleUncertainty()
-        msg.header.stamp = rospy.Time.now()
+        msg.header.stamp = stamp
         msg.header.frame_id = self.prediction_frame
         msg.dt = self.dt_pred
         msg.horizon = sigma_x.shape[0] - 1
@@ -707,9 +830,9 @@ class ScriptedMultiHumanMotionNode:
 
         return msg
 
-    def _build_prediction_message_from_xy(self, pred_xy):
+    def _build_prediction_message_from_xy(self, pred_xy, stamp):
         out = PredictedPeople()
-        out.header.stamp = rospy.Time.now()
+        out.header.stamp = stamp
         out.header.frame_id = self.prediction_frame
         out.dt = self.dt_pred
         out.horizon = self.n_pred
@@ -721,6 +844,8 @@ class ScriptedMultiHumanMotionNode:
 
     def _marker_color_for_source(self):
         """Return RGB color for the currently selected human source."""
+        if self.human_source == "gazebo_model_states":
+            return 0.0, 1.0, 0.0
         if self.human_source == "gt":
             # Cyan: internal scripted ground truth
             return 0.0, 1.0, 1.0
@@ -981,39 +1106,43 @@ class ScriptedMultiHumanMotionNode:
         self.pred_marker_pub.publish(marker_array)
 
     def build_learned_prediction_message(self):
-        out = PredictedPeople()
-        out.header.stamp = rospy.Time.now()
-        out.header.frame_id = self.prediction_frame
-        out.dt = self.dt_pred
-        out.horizon = self.n_pred
-
-        if len(self.active_people) == 0:
-            return out
-
-        if len(self.history) < self.predictor.obs_len:
-            if not self.publish_before_history_full:
-                return out
-            pred_wall_t0 = time.time()
-            pred_xy = self._constant_velocity_prediction_from_history(self.active_people)
-            self.prediction_processing_time_pub.publish(Float32(float(time.time() - pred_wall_t0)))
-            return self._build_prediction_message_from_xy(pred_xy)
-
-        obs_xy = np.stack(list(self.history), axis=0)  # [obs_len, N, 2]
-
-        try:
-            pred_wall_t0 = time.time()
-            pred_xy, sigma_x, sigma_y, rho = self.predictor.predict(obs_xy, self.n_pred)
-            self.prediction_processing_time_pub.publish(Float32(float(time.time() - pred_wall_t0)))
-            out = self._build_prediction_message_from_xy(pred_xy)
-            unc_msg = self.build_uncertainty_message(sigma_x, sigma_y, rho)
-            self.unc_pub.publish(unc_msg)
-
-        except Exception as e:
-            rospy.logwarn_throttle(1.0, "Learned prediction failed; using constant-velocity fallback: %s", str(e))
-            pred_xy = self._constant_velocity_prediction_from_history(self.active_people)
-            out = self._build_prediction_message_from_xy(pred_xy)
-
-        return out
+        if len(self.history) < self.obs_len:
+            return None, None
+        stamp = self.last_history_stamp
+        obs_xy = np.stack(list(self.history), axis=0)
+        # Do not silently substitute a constant-velocity model.
+        if len(self.active_people) < 2:
+            rospy.logwarn_throttle(2.0, "Social-STGCNN requires at least two people in this implementation")
+            return None, None
+        t0 = time.monotonic()
+        pred_xy, sx, sy, rho = self.predictor.predict(obs_xy, self.n_pred)
+        # Save exact prediction input/output WITHOUT affecting the model, MPC or evaluator.
+        self.debug_model_io_calls += 1
+        if (self.debug_save_model_io and
+                self.debug_model_io_saved < self.debug_model_io_max_files and
+                self.debug_model_io_calls % self.debug_model_io_every == 0):
+            try:
+                idx = self.debug_model_io_saved + 1
+                path = os.path.join(self.debug_model_io_dir,
+                    "stgcnn_%04d_t%010.3f.npz" % (idx, stamp.to_sec()))
+                np.savez_compressed(
+                    path,
+                    obs_xy=obs_xy.copy(),          # [8, N, 2], exact predictor input
+                    pred_xy=pred_xy.copy(),        # [13, N, 2], includes current pose
+                    sigma_x=sx.copy(), sigma_y=sy.copy(), rho=rho.copy(),
+                    person_ids=np.asarray(self.active_ids, dtype=np.int32),
+                    t0_sim=np.float64(stamp.to_sec()),
+                    prediction_dt=np.float64(self.dt_pred),
+                    prediction_horizon=np.int32(self.n_pred),
+                    model_checkpoint=np.asarray(str(getattr(self.predictor, 'checkpoint_path', ''))))
+                self.debug_model_io_saved += 1
+                rospy.loginfo("Saved exact Social-STGCNN IO [%d/%d]: %s",
+                    self.debug_model_io_saved, self.debug_model_io_max_files, path)
+            except Exception as err:
+                rospy.logerr_throttle(2.0, "Unable to save Social-STGCNN IO: %s", str(err))
+        self.prediction_processing_time_pub.publish(Float32(time.monotonic() - t0))
+        return (self._build_prediction_message_from_xy(pred_xy, stamp),
+                self.build_uncertainty_message(sx, sy, rho, stamp))
 
     def run(self):
         prev_time = rospy.Time.now()
@@ -1053,27 +1182,22 @@ class ScriptedMultiHumanMotionNode:
                 ok = self._update_history(now)
                 if ok:
                     self.publish_source_markers()
-                    prediction_cycle_wall_t0 = time.time()
-                    pred_msg = self.build_learned_prediction_message()
-                    self.pred_pub.publish(pred_msg)
-                    now_pub = rospy.Time.now()
-                    self.last_prediction_publish_time = self._publish_rate_from_interval(
-                        self.prediction_publish_rate_pub, now_pub, self.last_prediction_publish_time
-                    )
-                    self.prediction_total_cycle_time_pub.publish(Float32(float(time.time() - prediction_cycle_wall_t0)))
-                    self.prediction_history_size_pub.publish(Int32(len(self.history)))
-                    self.prediction_num_people_pub.publish(Int32(len(pred_msg.people)))
-                    self.publish_prediction_markers(pred_msg)
-                    rospy.loginfo_throttle(
-                        1.0,
-                        "Published predicted_people from source='%s' | people=%d | history=%d/%d",
-                        self.human_source,
-                        len(pred_msg.people),
-                        len(self.history),
-                        self.predictor.obs_len
-                    )
+                    learned_msg, unc_msg = self.build_learned_prediction_message()
+                    if learned_msg is not None:
+                        stamp = learned_msg.header.stamp
+                        oracle_msg = self.build_oracle_message(stamp)
+                        self.learned_pub.publish(learned_msg)
+                        self.oracle_pub.publish(oracle_msg)
+                        self.unc_pub.publish(unc_msg)
+                        selected = learned_msg if self.prediction_source == "learned" else oracle_msg
+                        self.pred_pub.publish(selected)
+                        self.publish_prediction_markers(selected)
+                        self.last_prediction_publish_time = self._publish_rate_from_interval(
+                            self.prediction_publish_rate_pub, rospy.Time.now(), self.last_prediction_publish_time)
+                        self.prediction_history_size_pub.publish(Int32(len(self.history)))
+                        self.prediction_num_people_pub.publish(Int32(len(learned_msg.people)))
             except Exception as e:
-                rospy.logwarn_throttle(1.0, "Prediction publishing failed, but human motion continues: %s", str(e))
+                rospy.logerr_throttle(1.0, "Prediction invalid (not publishing stale/fallback): %s", str(e))
 
             self.rate.sleep()
 
